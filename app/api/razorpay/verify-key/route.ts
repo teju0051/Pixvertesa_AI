@@ -1,46 +1,45 @@
 import { NextResponse } from "next/server";
 import Razorpay from "razorpay";
 
-const razorpay = new Razorpay({
-  key_id: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID!,
-  key_secret: process.env.RAZORPAY_KEY_SECRET!,
-});
-
 export async function POST(req: Request) {
   try {
-    const { orderId } = await req.json();
+    const { orderId } = (await req.json()) as { orderId?: string };
 
-    if (
-      !orderId ||
-      typeof orderId !== "string" ||
-      !orderId.startsWith("order_")
-    ) {
+    if (!orderId || !orderId.trim().startsWith("order_")) {
       return NextResponse.json(
-        {
-          valid: false,
-          error: "Please enter a valid Order ID (starts with order_).",
-        },
+        { valid: false, error: "Invalid Order ID format." },
         { status: 400 },
       );
     }
+
+    const keyId = process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID;
+    const keySecret = process.env.RAZORPAY_KEY_SECRET;
+
+    if (!keyId || !keySecret) {
+      return NextResponse.json(
+        {
+          valid: false,
+          error: "Razorpay keys are not configured on the server.",
+        },
+        { status: 500 },
+      );
+    }
+
+    const razorpay = new Razorpay({
+      key_id: keyId,
+      key_secret: keySecret,
+    });
 
     const order = await razorpay.orders.fetch(orderId.trim());
 
     if (order.status !== "paid") {
       return NextResponse.json(
-        {
-          valid: false,
-          error: "This Order ID does not have a completed payment.",
-        },
+        { valid: false, error: "This order has not been paid." },
         { status: 400 },
       );
     }
 
-    const notesPlan = (order.notes as Record<string, string>)?.plan;
-    const plan =
-      notesPlan === "enterprise" || Number(order.amount) >= 99900
-        ? "enterprise"
-        : "pro";
+    const plan = order.notes?.plan === "enterprise" ? "enterprise" : "pro";
 
     return NextResponse.json({
       valid: true,
@@ -48,13 +47,10 @@ export async function POST(req: Request) {
       plan,
     });
   } catch (error) {
-    console.error("Verify key error:", error);
+    console.error("Razorpay verify-key error:", error);
     return NextResponse.json(
-      {
-        valid: false,
-        error: "Access Key not found. Please check your Order ID.",
-      },
-      { status: 404 },
+      { valid: false, error: "Could not verify Access Key." },
+      { status: 400 },
     );
   }
 }
