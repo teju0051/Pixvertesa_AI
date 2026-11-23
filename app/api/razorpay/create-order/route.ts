@@ -1,72 +1,75 @@
 import { NextResponse } from "next/server";
 import Razorpay from "razorpay";
 
-const razorpay = new Razorpay({
-  key_id: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID!,
-  key_secret: process.env.RAZORPAY_KEY_SECRET!,
-});
+type Plan = "pro" | "enterprise";
+type Currency = "INR" | "USD";
+type BillingCycle = "monthly" | "yearly";
 
-// Amounts in smallest currency unit (paise for INR, cents for USD)
-const PRICING_MATRIX: Record<
-  "pro" | "enterprise",
-  Record<"INR" | "USD", Record<"monthly" | "yearly", number>>
-> = {
+const PRICING: Record<Plan, Record<Currency, Record<BillingCycle, number>>> = {
   pro: {
-    INR: {
-      monthly: 99 * 100, // ₹99 / month
-      yearly: 832 * 100, // ₹832 / year (30% OFF ₹1,188)
-    },
-    USD: {
-      monthly: 2 * 100, // $2 / month
-      yearly: 17 * 100, // $17 / year (30% OFF $24)
-    },
+    INR: { monthly: 99, yearly: 832 },
+    USD: { monthly: 2, yearly: 17 },
   },
   enterprise: {
-    INR: {
-      monthly: 999 * 100, // ₹999 / month
-      yearly: 8392 * 100, // ₹8,392 / year (30% OFF ₹11,988)
-    },
-    USD: {
-      monthly: 15 * 100, // $15 / month
-      yearly: 126 * 100, // $126 / year (30% OFF $180)
-    },
+    INR: { monthly: 999, yearly: 8392 },
+    USD: { monthly: 15, yearly: 126 },
   },
 };
 
 export async function POST(req: Request) {
   try {
-    const {
-      plan,
-      billingCycle = "monthly",
-      currency = "INR",
-      name,
-      email,
-      phone,
-    } = await req.json();
+    const body = (await req.json()) as {
+      plan?: string;
+      currency?: string;
+      billingCycle?: string;
+      name?: string;
+      email?: string;
+      phone?: string;
+    };
 
-    if (plan !== "pro" && plan !== "enterprise") {
+    const plan = body.plan as Plan;
+    const currency = body.currency as Currency;
+    const billingCycle = body.billingCycle as BillingCycle;
+    const { name = "", email = "", phone = "" } = body;
+
+    if (
+      !(plan in PRICING) ||
+      !(currency in PRICING[plan]) ||
+      !(billingCycle in PRICING[plan][currency])
+    ) {
       return NextResponse.json(
-        { error: "Invalid plan selected." },
+        { error: "Invalid plan, currency, or billing cycle." },
         { status: 400 },
       );
     }
-    const cycle: "monthly" | "yearly" =
-      billingCycle === "yearly" ? "yearly" : "monthly";
-    const curr: "INR" | "USD" = currency === "USD" ? "USD" : "INR";
 
-    const amount = PRICING_MATRIX[plan][curr][cycle];
+    const keyId = process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID;
+    const keySecret = process.env.RAZORPAY_KEY_SECRET;
+
+    if (!keyId || !keySecret) {
+      return NextResponse.json(
+        { error: "Razorpay keys are not configured on the server." },
+        { status: 500 },
+      );
+    }
+
+    const razorpay = new Razorpay({
+      key_id: keyId,
+      key_secret: keySecret,
+    });
+
+    const amount = PRICING[plan][currency][billingCycle] * 100;
 
     const order = await razorpay.orders.create({
       amount,
-      currency: curr,
-      receipt: `zt_${plan}_${cycle}_${Date.now()}`,
+      currency,
+      receipt: `rcpt_${Date.now()}`,
       notes: {
         plan,
-        billingCycle: cycle,
-        currency: curr,
-        customer_name: name || "",
-        customer_email: email || "",
-        customer_phone: phone || "",
+        billingCycle,
+        name,
+        email,
+        phone,
       },
     });
 
@@ -74,13 +77,11 @@ export async function POST(req: Request) {
       orderId: order.id,
       amount: order.amount,
       currency: order.currency,
-      plan,
-      billingCycle: cycle,
     });
   } catch (error) {
     console.error("Razorpay create-order error:", error);
     return NextResponse.json(
-      { error: "Failed to initialize payment order." },
+      { error: "Could not create Razorpay order." },
       { status: 500 },
     );
   }
