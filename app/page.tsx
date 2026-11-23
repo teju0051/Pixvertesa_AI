@@ -2,50 +2,235 @@
 
 import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
+import exifr from "exifr";
 
-// Define the type for the API result to fix the 'never' errors
+type PlanTier = "free" | "pro" | "enterprise";
+type BillingCycle = "monthly" | "yearly";
+type CurrencyCode = "INR" | "USD";
+
+type StoredSubscription = {
+  plan: PlanTier;
+  orderId: string;
+  activatedAt: string;
+  billingCycle?: BillingCycle;
+};
+
+type ExifSummary = {
+  make?: string;
+  model?: string;
+  software?: string;
+  dateTime?: string;
+  dimensions?: string;
+  fileSize?: string;
+  mimeType?: string;
+  colorSpace?: string;
+  gps?: string;
+};
+
 type DetectionResult = {
   isAi: boolean;
   confidence: string | number;
+  generator?: string;
   error?: string;
 };
 
+type BatchItem = {
+  file: File;
+  preview: string;
+  result: DetectionResult | null;
+  exif: ExifSummary | null;
+  status: "pending" | "scanning" | "done" | "error";
+};
+
+declare global {
+  interface Window {
+    Razorpay: new (options: Record<string, unknown>) => {
+      open: () => void;
+    };
+  }
+}
+
+const PRICE_DISPLAY = {
+  pro: {
+    INR: { monthly: 99, yearly: 832, yearlyPerMonth: 69, originalYearly: 1188 },
+    USD: { monthly: 2, yearly: 17, yearlyPerMonth: 1.4, originalYearly: 24 },
+  },
+  enterprise: {
+    INR: {
+      monthly: 999,
+      yearly: 8392,
+      yearlyPerMonth: 699,
+      originalYearly: 11988,
+    },
+    USD: {
+      monthly: 15,
+      yearly: 126,
+      yearlyPerMonth: 10.5,
+      originalYearly: 180,
+    },
+  },
+};
+
 export default function Home() {
-  // Added TypeScript types to all state variables
   const [image, setImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [result, setResult] = useState<DetectionResult | null>(null);
+  const [exifData, setExifData] = useState<ExifSummary | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [currentYear, setCurrentYear] = useState<string>("");
   const [openFaq, setOpenFaq] = useState<number | null>(0);
+  const [showScrollTop, setShowScrollTop] = useState<boolean>(false);
 
-  // States for Features
+  // Carousel state
+  const [activeSlide, setActiveSlide] = useState<number>(0);
+
+  // Pricing controls
+  const [billingCycle, setBillingCycle] = useState<BillingCycle>("yearly");
+  const [currency, setCurrency] = useState<CurrencyCode>("INR");
+
+  // Batch queue for Enterprise
+  const [batchQueue, setBatchQueue] = useState<BatchItem[]>([]);
+  const [batchRunning, setBatchRunning] = useState<boolean>(false);
+
+  // Usage & Subscription State
   const [usageCount, setUsageCount] = useState<number>(0);
-  const [showModal, setShowModal] = useState<boolean>(false);
-  const [showCyberModal, setShowCyberModal] = useState<boolean>(false);
+  const [subscription, setSubscription] = useState<StoredSubscription | null>(
+    null,
+  );
   const MAX_LIMIT = 10;
 
-  // Added HTMLInputElement type to the ref to fix the 'click' error
+  // Modals
+  const [showModal, setShowModal] = useState<boolean>(false);
+  const [showCyberModal, setShowCyberModal] = useState<boolean>(false);
+  const [pendingCheckoutPlan, setPendingCheckoutPlan] = useState<
+    "pro" | "enterprise" | null
+  >(null);
+  const [checkoutPlan, setCheckoutPlan] = useState<"pro" | "enterprise" | null>(
+    null,
+  );
+  const [customerName, setCustomerName] = useState<string>("");
+  const [customerEmail, setCustomerEmail] = useState<string>("");
+  const [customerPhone, setCustomerPhone] = useState<string>("");
+  const [checkoutLoading, setCheckoutLoading] = useState<boolean>(false);
+
+  // Post-Payment Access Key Modal
+  const [newOrderKey, setNewOrderKey] = useState<{
+    orderId: string;
+    plan: PlanTier;
+    email: string;
+  } | null>(null);
+  const [copiedKey, setCopiedKey] = useState<boolean>(false);
+
+  // Restore Access Key Modal
+  const [showRestoreModal, setShowRestoreModal] = useState<boolean>(false);
+  const [restoreInput, setRestoreInput] = useState<string>("");
+  const [restoreLoading, setRestoreLoading] = useState<boolean>(false);
+  const [restoreError, setRestoreError] = useState<string>("");
+
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const currentPlan: PlanTier = subscription?.plan || "free";
+  const isPaid = currentPlan === "pro" || currentPlan === "enterprise";
+  const isEnterprise = currentPlan === "enterprise";
+  const maxFileSizeMB = isEnterprise ? 50 : isPaid ? 25 : 5;
+  const limitReached = !isPaid && usageCount >= MAX_LIMIT;
+  const symbol = currency === "INR" ? "₹" : "$";
+
+  const showcaseSlides = [
+    {
+      title: "Synthetic Studio Render",
+      verdict: "AI Generated",
+      isAi: true,
+      confidence: "99.4%",
+      engine: "Midjourney v6.1",
+      exif: "EXIF Stripped • Latent Diffusion Artifacts",
+      image:
+        "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1200&q=85",
+      desc: "Micro-texture uniformity and lighting anomalies caught in under 300ms.",
+      pillBg: "#2B0D16",
+      pillColor: "#FDA4AF",
+    },
+    {
+      title: "Field Journalism Photograph",
+      verdict: "Authentic Real",
+      isAi: false,
+      confidence: "99.8%",
+      engine: "Sony A7R V • 35mm f/1.4",
+      exif: "Intact Sensor Grain • ISO 400",
+      image:
+        "https://images.unsplash.com/photo-1495020689067-958852a7765e?auto=format&fit=crop&w=1200&q=85",
+      desc: "Organic camera grain, valid shutter telemetry, and natural optical falloff confirmed.",
+      pillBg: "#07241B",
+      pillColor: "#6EE7B7",
+    },
+    {
+      title: "Document & KYC Verification",
+      verdict: "AI Generated",
+      isAi: true,
+      confidence: "98.7%",
+      engine: "Flux Pro / Inpainting",
+      exif: "Composite Boundary Mismatch • No Camera Profile",
+      image:
+        "https://images.unsplash.com/photo-1563986768609-322da13575f3?auto=format&fit=crop&w=1200&q=85",
+      desc: "Localized face-swap blending and synthetic typography edges flagged automatically.",
+      pillBg: "#2B1608",
+      pillColor: "#FDBA74",
+    },
+    {
+      title: "Architectural Aerial Survey",
+      verdict: "Authentic Real",
+      isAi: false,
+      confidence: "99.6%",
+      engine: "DJI Mavic 3 Pro • Hasselblad",
+      exif: "GPS & Lens Profile Verified • 1/1000s",
+      image:
+        "https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?auto=format&fit=crop&w=1200&q=85",
+      desc: "Consistent lens distortion and verified hardware metadata across the full frame.",
+      pillBg: "#101E38",
+      pillColor: "#93C5FD",
+    },
+  ];
 
   useEffect(() => {
     setCurrentYear(new Date().getFullYear().toString());
 
-    // Load daily usage from local storage
+    if (!document.getElementById("razorpay-checkout-js")) {
+      const script = document.createElement("script");
+      script.id = "razorpay-checkout-js";
+      script.src = "https://checkout.razorpay.com/v1/checkout.js";
+      script.async = true;
+      document.body.appendChild(script);
+    }
+
+    const savedSub = localStorage.getItem("zentech_subscription");
+    if (savedSub) {
+      try {
+        const parsedSub: StoredSubscription = JSON.parse(savedSub);
+        if (parsedSub?.orderId && parsedSub?.plan) setSubscription(parsedSub);
+      } catch {
+        localStorage.removeItem("zentech_subscription");
+      }
+    }
+
     const today = new Date().toISOString().split("T")[0];
     const storedData = localStorage.getItem("zentech_usage");
-
     if (storedData) {
-      const parsed = JSON.parse(storedData);
-      if (parsed.date === today) {
-        setUsageCount(parsed.count);
-      } else {
+      try {
+        const parsed = JSON.parse(storedData);
+        if (parsed.date === today) setUsageCount(parsed.count);
+        else {
+          localStorage.setItem(
+            "zentech_usage",
+            JSON.stringify({ date: today, count: 0 }),
+          );
+          setUsageCount(0);
+        }
+      } catch {
         localStorage.setItem(
           "zentech_usage",
           JSON.stringify({ date: today, count: 0 }),
         );
-        setUsageCount(0);
       }
     } else {
       localStorage.setItem(
@@ -54,52 +239,145 @@ export default function Home() {
       );
     }
 
-    // Intersection Observer types
-    const observer = new IntersectionObserver(
-      (entries: IntersectionObserverEntry[]) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) {
-            entry.target.classList.add("reveal-visible");
-          }
-        });
-      },
-      { threshold: 0.1 },
+    const handleScroll = () => setShowScrollTop(window.scrollY > 360);
+    window.addEventListener("scroll", handleScroll, { passive: true });
+
+    const slideTimer = setInterval(() => {
+      setActiveSlide((prev) => (prev + 1) % showcaseSlides.length);
+    }, 6000);
+
+    return () => {
+      window.removeEventListener("scroll", handleScroll);
+      clearInterval(slideTimer);
+    };
+  }, [showcaseSlides.length]);
+
+  const extractImageMetadata = async (file: File): Promise<ExifSummary> => {
+    const summary: ExifSummary = {
+      fileSize: `${(file.size / (1024 * 1024)).toFixed(2)} MB`,
+      mimeType: file.type || "Unknown",
+    };
+
+    try {
+      const dims = await new Promise<string>((resolve) => {
+        const img = new Image();
+        img.onload = () =>
+          resolve(`${img.naturalWidth} × ${img.naturalHeight} px`);
+        img.onerror = () => resolve("Unavailable");
+        img.src = URL.createObjectURL(file);
+      });
+      summary.dimensions = dims;
+    } catch {
+      summary.dimensions = "Unavailable";
+    }
+
+    try {
+      const parsed = await exifr.parse(file, true);
+      if (parsed) {
+        summary.make = parsed.Make || undefined;
+        summary.model = parsed.Model || undefined;
+        summary.software =
+          parsed.Software ||
+          parsed.CreatorTool ||
+          parsed.ProcessingSoftware ||
+          undefined;
+        summary.dateTime = parsed.DateTimeOriginal
+          ? new Date(parsed.DateTimeOriginal).toLocaleString()
+          : parsed.CreateDate
+            ? new Date(parsed.CreateDate).toLocaleString()
+            : undefined;
+        summary.colorSpace = parsed.ColorSpace
+          ? String(parsed.ColorSpace)
+          : undefined;
+        if (parsed.latitude && parsed.longitude) {
+          summary.gps = `${Number(parsed.latitude).toFixed(4)}, ${Number(
+            parsed.longitude,
+          ).toFixed(4)}`;
+        }
+      }
+    } catch {
+      // No embedded EXIF
+    }
+    return summary;
+  };
+
+  const resolveAiGenerator = (
+    data: DetectionResult,
+    meta: ExifSummary | null,
+  ): string => {
+    if (data.generator) return data.generator;
+    const sw = (meta?.software || "").toLowerCase();
+    if (sw.includes("firefly") || sw.includes("adobe"))
+      return "Adobe Firefly / Photoshop AI";
+    if (sw.includes("midjourney")) return "Midjourney";
+    if (
+      sw.includes("stable") ||
+      sw.includes("automatic1111") ||
+      sw.includes("comfy")
+    )
+      return "Stable Diffusion";
+    if (sw.includes("dall")) return "OpenAI DALL-E 3";
+    const score = parseFloat(String(data.confidence));
+    if (!data.isAi) return "Authentic Camera / Human Capture";
+    if (score >= 92) return "Midjourney v6 / Diffusion Model";
+    if (score >= 78) return "DALL-E 3 / Flux Architecture";
+    return "Stable Diffusion / Generative Model";
+  };
+
+  const validateAndSetFiles = async (files: FileList | File[]) => {
+    if (limitReached) return;
+    const fileArray = Array.from(files).filter((f) =>
+      f.type.startsWith("image/"),
     );
-
-    document.querySelectorAll(".reveal-element").forEach((el) => {
-      observer.observe(el);
-    });
-
-    return () => observer.disconnect();
-  }, []);
-
-  // Added File type to the parameter
-  const validateAndSetFile = (file: File | null | undefined) => {
-    if (usageCount >= MAX_LIMIT) return;
-    if (!file) return;
-    if (!file.type.startsWith("image/")) {
-      alert("Please upload a valid image file.");
+    if (fileArray.length === 0) {
+      alert("Please upload a valid image file (JPG, PNG, WEBP).");
       return;
     }
-    if (file.size > 5 * 1024 * 1024) {
-      alert("File is too large. Please upload an image under 5MB.");
+
+    const maxBytes = maxFileSizeMB * 1024 * 1024;
+    const validFiles = fileArray.filter((f) => f.size <= maxBytes);
+    if (validFiles.length < fileArray.length) {
+      alert(
+        `Some files exceeded your ${maxFileSizeMB}MB plan limit.${
+          !isPaid ? " Upgrade to Pro for large image support (up to 25MB)." : ""
+        }`,
+      );
+    }
+    if (validFiles.length === 0) return;
+
+    if (isEnterprise && validFiles.length > 1) {
+      const items: BatchItem[] = validFiles.slice(0, 15).map((f) => ({
+        file: f,
+        preview: URL.createObjectURL(f),
+        result: null,
+        exif: null,
+        status: "pending",
+      }));
+      setBatchQueue(items);
+      setImage(validFiles[0]);
+      setImagePreview(items[0].preview);
+      setResult(null);
+      setExifData(null);
       return;
     }
+
+    const file = validFiles[0];
+    setBatchQueue([]);
     setImage(file);
     setImagePreview(URL.createObjectURL(file));
     setResult(null);
+    const meta = await extractImageMetadata(file);
+    setExifData(meta);
   };
 
-  // Added exact React event types for all handlers
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      validateAndSetFile(e.target.files[0]);
-    }
+    if (e.target.files && e.target.files.length > 0)
+      validateAndSetFiles(e.target.files);
   };
 
   const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
-    if (usageCount < MAX_LIMIT) setIsDragging(true);
+    if (!limitReached) setIsDragging(true);
   };
 
   const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
@@ -110,20 +388,21 @@ export default function Home() {
   const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setIsDragging(false);
-    if (usageCount >= MAX_LIMIT) return;
-
+    if (limitReached) return;
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      validateAndSetFile(e.dataTransfer.files[0]);
+      validateAndSetFiles(e.dataTransfer.files);
       e.dataTransfer.clearData();
     }
   };
 
   const analyzeImage = async () => {
+    if (isEnterprise && batchQueue.length > 1) {
+      await runBatchAnalysis();
+      return;
+    }
     if (!image) return;
-    if (usageCount >= MAX_LIMIT) {
-      alert(
-        "Your 10 daily limit reached. Please wait for another 24 hours or upgrade your plan.",
-      );
+    if (limitReached) {
+      setPendingCheckoutPlan("pro");
       return;
     }
 
@@ -132,6 +411,8 @@ export default function Home() {
 
     const formData = new FormData();
     formData.append("file", image);
+    formData.append("plan", currentPlan);
+    if (subscription?.orderId) formData.append("orderId", subscription.orderId);
 
     try {
       const response = await fetch("/api/detect", {
@@ -139,22 +420,21 @@ export default function Home() {
         body: formData,
       });
       const data: DetectionResult = await response.json();
-
       if (data.error) {
         alert(data.error);
         return;
       }
-
       setResult(data);
 
-      // Increment and save usage count
-      const newCount = usageCount + 1;
-      setUsageCount(newCount);
-      const today = new Date().toISOString().split("T")[0];
-      localStorage.setItem(
-        "zentech_usage",
-        JSON.stringify({ date: today, count: newCount }),
-      );
+      if (!isPaid) {
+        const newCount = usageCount + 1;
+        setUsageCount(newCount);
+        const today = new Date().toISOString().split("T")[0];
+        localStorage.setItem(
+          "zentech_usage",
+          JSON.stringify({ date: today, count: newCount }),
+        );
+      }
     } catch (error) {
       console.error("Error analyzing image:", error);
       alert("Failed to analyze image.");
@@ -163,70 +443,342 @@ export default function Home() {
     }
   };
 
+  const runBatchAnalysis = async () => {
+    setBatchRunning(true);
+    const updated = [...batchQueue];
+    for (let i = 0; i < updated.length; i++) {
+      updated[i] = { ...updated[i], status: "scanning" };
+      setBatchQueue([...updated]);
+      const meta = await extractImageMetadata(updated[i].file);
+      const formData = new FormData();
+      formData.append("file", updated[i].file);
+      formData.append("plan", currentPlan);
+      if (subscription?.orderId)
+        formData.append("orderId", subscription.orderId);
+
+      try {
+        const res = await fetch("/api/detect", {
+          method: "POST",
+          body: formData,
+        });
+        const data: DetectionResult = await res.json();
+        updated[i] = {
+          ...updated[i],
+          result: data.error ? null : data,
+          exif: meta,
+          status: data.error ? "error" : "done",
+        };
+      } catch {
+        updated[i] = { ...updated[i], status: "error", exif: meta };
+      }
+      setBatchQueue([...updated]);
+    }
+    setBatchRunning(false);
+  };
+
+  const exportCsvReport = () => {
+    const rows = [
+      [
+        "Filename",
+        "Verdict",
+        "AI Probability (%)",
+        "Likely Engine",
+        "Dimensions",
+        "File Size",
+        "Camera / Software",
+        "Timestamp",
+      ],
+    ];
+
+    if (batchQueue.length > 0) {
+      batchQueue.forEach((item) => {
+        if (!item.result) return;
+        rows.push([
+          item.file.name,
+          item.result.isAi ? "AI Generated" : "Authentic Real",
+          String(item.result.confidence),
+          resolveAiGenerator(item.result, item.exif),
+          item.exif?.dimensions || "N/A",
+          item.exif?.fileSize || "N/A",
+          item.exif?.software || item.exif?.model || "Stripped / None",
+          item.exif?.dateTime || "Not embedded",
+        ]);
+      });
+    } else if (image && result) {
+      rows.push([
+        image.name,
+        result.isAi ? "AI Generated" : "Authentic Real",
+        String(result.confidence),
+        resolveAiGenerator(result, exifData),
+        exifData?.dimensions || "N/A",
+        exifData?.fileSize || "N/A",
+        exifData?.software || exifData?.model || "Stripped / None",
+        exifData?.dateTime || "Not embedded",
+      ]);
+    }
+
+    const csv = rows
+      .map((r) => r.map((c) => `"${c.replace(/"/g, '""')}"`).join(","))
+      .join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `zentech-forensic-report-${Date.now()}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const startRazorpayCheckout = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!checkoutPlan) return;
+    if (
+      !customerName.trim() ||
+      !customerEmail.trim() ||
+      !customerPhone.trim()
+    ) {
+      alert("Please fill in your name, email, and phone number.");
+      return;
+    }
+
+    setCheckoutLoading(true);
+    try {
+      const orderRes = await fetch("/api/razorpay/create-order", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          plan: checkoutPlan,
+          billingCycle,
+          currency,
+          name: customerName.trim(),
+          email: customerEmail.trim(),
+          phone: customerPhone.trim(),
+        }),
+      });
+
+      const orderData = await orderRes.json();
+      if (!orderRes.ok || !orderData.orderId) {
+        throw new Error(orderData.error || "Could not create Razorpay order.");
+      }
+
+      const planLabel = `${checkoutPlan === "enterprise" ? "Enterprise" : "Professional"} (${
+        billingCycle === "yearly" ? "Yearly   30% OFF" : "Monthly"
+      })`;
+
+      const options = {
+        key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
+        amount: orderData.amount,
+        currency: orderData.currency,
+        name: " Znxios International",
+        description: `AI Image Verification   ${planLabel}`,
+        image: "#",
+        order_id: orderData.orderId,
+        prefill: {
+          name: customerName.trim(),
+          email: customerEmail.trim(),
+          contact: customerPhone.trim(),
+        },
+        config:
+          currency === "INR"
+            ? {
+                display: {
+                  blocks: {
+                    upi_block: {
+                      name: "1-Tap UPI (Instant)",
+                      instruments: [{ method: "upi" }],
+                    },
+                  },
+                  sequence: ["block.upi_block"],
+                  preferences: { show_default_blocks: true },
+                },
+              }
+            : undefined,
+        theme: { color: "#000000" },
+        handler: async (response: {
+          razorpay_order_id: string;
+          razorpay_payment_id: string;
+          razorpay_signature: string;
+        }) => {
+          try {
+            const verifyRes = await fetch("/api/razorpay/verify", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                ...response,
+                plan: checkoutPlan,
+                billingCycle,
+                currency,
+                name: customerName.trim(),
+                email: customerEmail.trim(),
+                phone: customerPhone.trim(),
+              }),
+            });
+
+            const verifyData = await verifyRes.json();
+            if (verifyData.verified) {
+              const subData: StoredSubscription = {
+                plan: checkoutPlan,
+                orderId: verifyData.orderId,
+                billingCycle,
+                activatedAt: new Date().toISOString(),
+              };
+              localStorage.setItem(
+                "zentech_subscription",
+                JSON.stringify(subData),
+              );
+              setSubscription(subData);
+              setCheckoutPlan(null);
+              setNewOrderKey({
+                orderId: verifyData.orderId,
+                plan: checkoutPlan,
+                email: customerEmail.trim(),
+              });
+            } else {
+              alert(verifyData.error || "Payment verification failed.");
+            }
+          } catch (err) {
+            console.error(err);
+            alert(
+              "Verification error. Please contact support with your Order ID.",
+            );
+          }
+        },
+      };
+
+      const rzp = new window.Razorpay(options);
+      rzp.open();
+    } catch (error) {
+      console.error(error);
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Payment initialization failed.",
+      );
+    } finally {
+      setCheckoutLoading(false);
+    }
+  };
+
+  const handleRestoreKey = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setRestoreError("");
+    if (!restoreInput.trim()) return;
+    setRestoreLoading(true);
+    try {
+      const res = await fetch("/api/razorpay/verify-key", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderId: restoreInput.trim() }),
+      });
+      const data = await res.json();
+      if (!data.valid) {
+        setRestoreError(data.error || "Invalid Access Key.");
+        return;
+      }
+      const subData: StoredSubscription = {
+        plan: data.plan,
+        orderId: data.orderId,
+        activatedAt: new Date().toISOString(),
+      };
+      localStorage.setItem("zentech_subscription", JSON.stringify(subData));
+      setSubscription(subData);
+      setShowRestoreModal(false);
+      setRestoreInput("");
+    } catch {
+      setRestoreError("Could not verify key right now. Please try again.");
+    } finally {
+      setRestoreLoading(false);
+    }
+  };
+
   const resetScanner = () => {
     setImage(null);
     setImagePreview(null);
     setResult(null);
+    setExifData(null);
+    setBatchQueue([]);
   };
 
   const getProbabilities = () => {
     if (!result) return { ai: "0.0", real: "0.0" };
     const aiScore = parseFloat(String(result.confidence));
-    const realScore = 100 - aiScore;
+    const realScore = Math.max(0, 100 - aiScore);
     return { ai: aiScore.toFixed(1), real: realScore.toFixed(1) };
   };
 
   const probs = getProbabilities();
 
+  const engines = [
+    { name: "Midjourney v6", bg: "#101E38", color: "#93C5FD" },
+    { name: "DALL-E 3", bg: "#262008", color: "#FDE047" },
+    { name: "Stable Diffusion", bg: "#1C1233", color: "#C4B5FD" },
+    { name: "Flux Pro", bg: "#07241B", color: "#6EE7B7" },
+    { name: "Adobe Firefly", bg: "#2B1608", color: "#FDBA74" },
+    { name: "Imagen 3", bg: "#2B0D16", color: "#FDA4AF" },
+    { name: "Ideogram 2.0", bg: "#0C2233", color: "#7DD3FC" },
+  ];
+
   const testimonials = [
     {
       name: "Rahul Sharma",
       role: "Cybersecurity Analyst",
-      text: "Incredible accuracy. It instantly flagged fake AI images that our manual checks completely missed.",
+      company: "FinShield India",
+      color: "#2563EB",
+      text: "Caught synthetic KYC documents that passed manual review. Fast, friendly, and super accurate.",
     },
     {
       name: "Ingrid Olsen",
       role: "Media Verifier",
-      text: "This tool is a game changer for our newsroom's daily fact-checking process. It's so easy to use.",
+      company: "Nordic Press Desk",
+      color: "#F97316",
+      text: "EXIF inspection and engine attribution fit cleanly into our newsroom's daily fact-checking.",
     },
     {
       name: "Amit Desai",
-      role: "IT Director",
-      text: "A very clean design and lightning-fast results. We integrated this into our daily workflow immediately.",
+      role: "Director of Engineering",
+      company: "CloudVault",
+      color: "#10B981",
+      text: "Zero image retention and instant CSV exports gave our compliance team total peace of mind.",
     },
     {
       name: "Lars Johansen",
-      role: "Digital Investigator",
-      text: "The percentage breakdown is highly detailed. Easily the most reliable AI detector on the market right now.",
+      role: "Digital Forensics Lead",
+      company: "VeriTrace EU",
+      color: "#7C3AED",
+      text: "Batch processing saves us hours every week during large-scale visual authenticity audits.",
     },
     {
       name: "Priya Patel",
-      role: "Content Moderator",
-      text: "We process thousands of pictures daily. This tool ensures we never accidentally publish AI-generated content.",
+      role: "Trust & Safety Lead",
+      company: "SocialPulse",
+      color: "#E11D48",
+      text: "Accurately distinguishes modern diffusion renders from genuine camera captures every time.",
     },
     {
       name: "Henrik Bakken",
-      role: "Security Consultant",
-      text: "The fact that they delete the images instantly gives our enterprise clients total peace of mind.",
+      role: "Security Architect",
+      company: "SecOps Global",
+      color: "#CA8A04",
+      text: "No account clutter just a verified Access Key and instant forensic tooling.",
     },
   ];
 
   const faqs = [
     {
       q: "What happens to the images I upload?",
-      a: "Your privacy is our priority. Your images are scanned in real-time and then instantly deleted forever. We never save, store, or share your pictures.",
+      a: "Images are analyzed in temporary memory and discarded the moment your verdict appears. We never store, log, or train on your files.",
     },
     {
-      q: "Which AI image creators can this detect?",
-      a: "Our system is trained to spot hidden signs from all major AI tools, including Midjourney, DALL-E 3, Stable Diffusion, and Adobe Firefly.",
+      q: "How does my subscription work without a login?",
+      a: "Right after Razorpay checkout, your unique Order ID becomes your Access Key. It saves automatically in your browser and is emailed to you so you can restore access anywhere.",
     },
     {
-      q: "How accurate is the 99.98% number?",
-      a: "We tested our tool on over 1.2 million images (a mix of real photos and AI images) to ensure it gets the right answer 99.98% of the time.",
+      q: "Which payment methods are supported?",
+      a: "Pick INR (₹) for instant 1-Tap UPI (Google Pay, PhonePe, Paytm) and Indian cards, or switch to USD ($) for international Visa and Mastercard checkout.",
     },
     {
-      q: "Can I use this for my business website?",
-      a: "Yes! Our Pro and Enterprise plans allow you to connect our tool directly to your website or app so you can check images automatically.",
+      q: "How do I download CSV forensic reports?",
+      a: "On the Enterprise plan, a Download CSV Report button appears right below your single-image verdict or batch scan queue with complete probability, engine, and EXIF details.",
     },
   ];
 
@@ -236,181 +788,1474 @@ export default function Home() {
         dangerouslySetInnerHTML={{
           __html: `
         :root {
-          --neon-blue: #00f2fe;
-          --neon-purple: #4facfe;
-          --bg-dark: #050505;
-          --glass-bg: rgba(20, 20, 25, 0.4);
-          --glass-border: rgba(255, 255, 255, 0.08);
+          --paper: #000000;
+          --white: #0B0B0D;
+          --surface-2: #141418;
+          --ink: #FFFFFF;
+          --muted: #A1A1AA;
+          --subtle: #71717A;
+          --border: #242429;
+          --border-strong: #3F3F46;
+
+          /* Flat Solid Playful Palette on Full Black */
+          --blue: #2563EB;
+          --blue-dark: #1D4ED8;
+          --blue-soft: #101E38;
+          --blue-ink: #93C5FD;
+
+          --yellow: #FACC15;
+          --yellow-soft: #262008;
+          --yellow-ink: #FDE047;
+
+          --coral: #F97316;
+          --coral-soft: #2B1608;
+          --coral-ink: #FDBA74;
+
+          --mint: #10B981;
+          --mint-soft: #07241B;
+          --mint-ink: #6EE7B7;
+
+          --rose: #E11D48;
+          --rose-soft: #2B0D16;
+          --rose-ink: #FDA4AF;
+
+          --violet: #7C3AED;
+          --violet-soft: #1C1233;
+          --violet-ink: #C4B5FD;
+
+          --font-sans: "Plus Jakarta Sans", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+          --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
         }
 
-        @keyframes aurora {
-          0% { background-position: 50% 50%, 50% 50%; }
-          100% { background-position: 350% 50%, 350% 50%; }
-        }
-        @keyframes float3D {
-          0% { transform: translateY(0px) rotateX(0deg) rotateY(0deg); }
-          50% { transform: translateY(-5px) rotateX(1deg) rotateY(1deg); }
-          100% { transform: translateY(0px) rotateX(0deg) rotateY(0deg); }
-        }
-        @keyframes scanLaser {
-          0% { top: 0%; opacity: 0; box-shadow: 0 0 0px var(--neon-blue); }
-          10% { opacity: 1; box-shadow: 0 0 20px var(--neon-blue); }
-          90% { opacity: 1; box-shadow: 0 0 20px var(--neon-blue); }
-          100% { top: 100%; opacity: 0; box-shadow: 0 0 0px var(--neon-blue); }
-        }
-        @keyframes revealUp {
-          from { opacity: 0; transform: translateY(40px) scale(0.95); filter: blur(5px); }
-          to { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
-        }
-
-        body, html {
-          background-color: var(--bg-dark);
-          color: #fff;
-          overflow-x: hidden;
+- { box-sizing: border-box; }
+        html, body {
+          margin: 0;
+          padding: 0;
+          background: var(--paper);
+          color: var(--ink);
+          font-family: var(--font-sans);
+          -webkit-font-smoothing: antialiased;
           scroll-behavior: smooth;
         }
 
-        .awwwards-bg {
-          background-color: var(--bg-dark);
-          background-image: 
-            radial-gradient(ellipse at 100% 0%, rgba(79, 172, 254, 0.12) 0%, transparent 50%),
-            radial-gradient(ellipse at 0% 100%, rgba(0, 242, 254, 0.12) 0%, transparent 50%);
-          background-size: 200% 200%;
-          animation: aurora 20s linear infinite alternate;
+        .zt-page {
+          min-height: 100vh;
+          display: flex;
+          flex-direction: column;
+          background: var(--paper);
         }
 
-        .bento-grid {
+        .zt-wrap {
+          width: 100%;
+          max-width: 1140px;
+          margin: 0 auto;
+          padding: 0 24px;
+        }
+
+        /* HEADER */
+        .zt-header {
+          position: sticky;
+          top: 0;
+          z-index: 100;
+          background: #000000;
+          border-bottom: 1.5px solid var(--border);
+        }
+        .zt-header-inner {
+          max-width: 1140px;
+          margin: 0 auto;
+          padding: 14px 24px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 16px;
+        }
+        .zt-brand {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          text-decoration: none;
+        }
+        .zt-brand img {
+          height: 38px;
+          width: auto;
+          display: block;
+        }
+        .zt-nav {
+          display: flex;
+          align-items: center;
+          gap: 28px;
+        }
+        .zt-nav a {
+          text-decoration: none;
+          font-size: 14px;
+          font-weight: 600;
+          color: var(--muted);
+          transition: color 0.15s ease;
+        }
+        .zt-nav a:hover { color: var(--ink); }
+
+        .zt-header-actions {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+        }
+        .zt-msme-btn {
+          background: #FFFFFF;
+          border: 1.5px solid var(--border-strong);
+          border-radius: 10px;
+          padding: 4px 8px;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          transition: transform 0.15s ease, border-color 0.15s ease;
+        }
+        .zt-msme-btn:hover {
+          border-color: var(--ink);
+          transform: translateY(-1px);
+        }
+        .zt-msme-btn img { height: 28px; width: auto; display: block; }
+
+        /* TACTILE FLAT BUTTONS */
+        .zt-btn {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+          font-family: var(--font-sans);
+          font-size: 14px;
+          font-weight: 700;
+          padding: 12px 20px;
+          border-radius: 12px;
+          border: 1.5px solid transparent;
+          cursor: pointer;
+          text-decoration: none;
+          transition: transform 0.12s ease, background 0.15s ease, border-color 0.15s ease;
+          white-space: nowrap;
+        }
+        .zt-btn:disabled {
+          opacity: 0.4;
+          cursor: not-allowed;
+          transform: none !important;
+        }
+        .zt-btn-blue {
+          background: var(--blue);
+          color: #FFFFFF;
+          border-color: #3B82F6;
+        }
+        .zt-btn-blue:hover:not(:disabled) {
+          background: var(--blue-dark);
+          transform: translateY(-1px);
+        }
+
+        .zt-btn-yellow {
+          background: var(--yellow);
+          color: #000000;
+          border-color: var(--yellow);
+        }
+        .zt-btn-yellow:hover:not(:disabled) {
+          background: #EAB308;
+          transform: translateY(-1px);
+        }
+
+        .zt-btn-white {
+          background: var(--surface-2);
+          color: var(--ink);
+          border-color: var(--border-strong);
+        }
+        .zt-btn-white:hover:not(:disabled) {
+          background: #1E1E24;
+          border-color: var(--ink);
+          transform: translateY(-1px);
+        }
+
+        .zt-btn-rose {
+          background: var(--rose);
+          color: #FFFFFF;
+          border-color: #F43F5E;
+        }
+        .zt-btn-rose:hover:not(:disabled) {
+          background: #BE123C;
+          transform: translateY(-1px);
+        }
+
+        .zt-btn-mint {
+          background: var(--mint);
+          color: #000000;
+          border-color: #34D399;
+        }
+        .zt-btn-mint:hover:not(:disabled) {
+          background: #059669;
+          color: #FFFFFF;
+          transform: translateY(-1px);
+        }
+
+        .zt-btn-sm {
+          font-size: 13px;
+          padding: 7px 14px;
+          border-radius: 10px;
+        }
+        .zt-btn-full { width: 100%; }
+
+        /* HERO */
+        .zt-hero {
+          padding: 58px 0 34px;
+          text-align: center;
+        }
+        .zt-hero h1 {
+          margin: 0 auto 16px;
+          max-width: 760px;
+          font-size: clamp(34px, 5vw, 54px);
+          font-weight: 800;
+          letter-spacing: -0.03em;
+          line-height: 1.1;
+          color: var(--ink);
+        }
+        .zt-highlight {
+          background: var(--yellow);
+          color: #000000;
+          padding: 0 12px;
+          border-radius: 10px;
+          display: inline-block;
+        }
+        .zt-hero p {
+          margin: 0 auto;
+          max-width: 560px;
+          font-size: 17px;
+          line-height: 1.6;
+          color: var(--muted);
+        }
+
+        /* SCANNER CARD */
+        .zt-workspace {
+          background: var(--white);
+          border: 1.5px solid var(--border-strong);
+          border-radius: 22px;
           display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-          gap: 1.5rem;
+          grid-template-columns: 1fr 1fr;
+          overflow: hidden;
+          margin-bottom: 40px;
         }
-        .bento-item {
-          background: var(--glass-bg);
-          backdrop-filter: blur(20px);
-          border: 1px solid var(--glass-border);
-          border-radius: 1.5rem;
-          padding: 2rem;
-          transition: all 0.4s ease;
+        .zt-pane-left {
+          padding: 28px;
+          border-right: 1.5px solid var(--border);
+          background: #060608;
+          display: flex;
+          flex-direction: column;
         }
-        .bento-item:hover {
-          transform: translateY(-5px);
-          border-color: rgba(0, 242, 254, 0.3);
-          box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), 0 0 20px rgba(0, 242, 254, 0.1);
-        }
-
-        .reveal-element { opacity: 0; }
-        .reveal-visible { animation: revealUp 0.8s cubic-bezier(0.2, 0.8, 0.2, 1) forwards; }
-        .delay-1 { animation-delay: 0.1s; }
-        .delay-2 { animation-delay: 0.2s; }
-        
-        .text-gradient {
-          background: linear-gradient(to right, #ffffff, #a0aec0);
-          -webkit-background-clip: text;
-          -webkit-text-fill-color: transparent;
-        }
-        .text-neon {
-          background: linear-gradient(135deg, var(--neon-blue) 0%, var(--neon-purple) 100%);
-          -webkit-background-clip: text;
-          -webkit-text-fill-color: transparent;
+        .zt-pane-right {
+          padding: 32px;
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
+          background: var(--white);
         }
 
-        .btn-premium {
-          background: linear-gradient(90deg, var(--neon-blue), var(--neon-purple), var(--neon-blue));
-          background-size: 200% auto;
-          color: #000 !important;
-          border: none;
-          transition: 0.5s;
+        .zt-dropzone {
+          flex: 1;
+          min-height: 410px;
+          border: 2px dashed var(--border-strong);
+          border-radius: 16px;
+          background: var(--white);
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          text-align: center;
+          padding: 32px 24px;
+          cursor: pointer;
+          position: relative;
+          overflow: hidden;
+          transition: border-color 0.2s ease, background 0.2s ease;
         }
-        .btn-premium:hover {
-          background-position: right center;
-          box-shadow: 0 0 20px rgba(0, 242, 254, 0.4);
-          transform: scale(1.02);
+        .zt-dropzone:hover, .zt-dropzone.dragging {
+          border-color: var(--blue);
+          background: #0B1220;
+        }
+        .zt-upload-badge {
+          width: 64px;
+          height: 64px;
+          border-radius: 18px;
+          background: var(--blue-soft);
+          color: var(--blue-ink);
+          border: 1.5px solid var(--blue);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          margin: 0 auto 18px;
+        }
+        .zt-drop-title {
+          font-size: 19px;
+          font-weight: 700;
+          color: var(--ink);
+          margin: 0 0 6px;
+        }
+        .zt-drop-sub {
+          font-size: 14px;
+          color: var(--muted);
+          margin: 0 0 22px;
+        }
+        .zt-pill-row {
+          display: flex;
+          flex-wrap: wrap;
+          justify-content: center;
+          gap: 8px;
+        }
+        .zt-pill {
+          font-family: var(--font-mono);
+          font-size: 11px;
+          font-weight: 700;
+          padding: 5px 11px;
+          border-radius: 999px;
+          display: inline-block;
         }
 
-        .scanner-card {
-          background: rgba(10, 10, 12, 0.9);
-          backdrop-filter: blur(30px);
-          border: 1px solid rgba(255,255,255,0.05);
-          border-radius: 2rem;
-          box-shadow: 0 30px 60px rgba(0,0,0,0.8), inset 0 1px 0 rgba(255,255,255,0.1);
-          animation: float3D 8s ease-in-out infinite;
+        @keyframes scanBar {
+          0% { top: 0%; }
+          50% { top: calc(100% - 4px); }
+          100% { top: 0%; }
         }
-        
-        .laser {
+        .zt-scan-bar {
           position: absolute;
-          left: 0; right: 0;
-          height: 2px;
-          background: var(--neon-blue);
-          animation: scanLaser 2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
-          z-index: 10;
+          left: 0;
+          right: 0;
+          height: 4px;
+          background: var(--blue);
+          animation: scanBar ${isPaid ? "1.1s" : "1.8s"} ease-in-out infinite;
+          z-index: 5;
         }
 
-        .modal-overlay {
+        /* BATCH LIST */
+        .zt-batch-list {
+          width: 100%;
+          max-height: 330px;
+          overflow-y: auto;
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+          text-align: left;
+        }
+        .zt-batch-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          padding: 8px 10px;
+          border: 1.5px solid var(--border);
+          border-radius: 12px;
+          background: var(--surface-2);
+        }
+        .zt-batch-file {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          min-width: 0;
+        }
+        .zt-batch-file img {
+          width: 38px;
+          height: 38px;
+          object-fit: cover;
+          border-radius: 8px;
+          flex-shrink: 0;
+        }
+        .zt-batch-name {
+          font-size: 13px;
+          font-weight: 600;
+          color: var(--ink);
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        /* PIPELINE STEPS */
+        .zt-kicker {
+          font-family: var(--font-mono);
+          font-size: 11px;
+          font-weight: 700;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+          color: var(--subtle);
+          margin-bottom: 12px;
+          display: block;
+        }
+        .zt-steps {
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+          margin-bottom: 26px;
+        }
+        .zt-step {
+          display: flex;
+          align-items: flex-start;
+          gap: 14px;
+          padding: 14px;
+          border: 1.5px solid var(--border);
+          border-radius: 14px;
+          background: var(--surface-2);
+        }
+        .zt-step-dot {
+          width: 32px;
+          height: 32px;
+          border-radius: 10px;
+          font-family: var(--font-mono);
+          font-size: 12px;
+          font-weight: 800;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+        }
+        .zt-step h4 {
+          margin: 0 0 3px;
+          font-size: 14px;
+          font-weight: 700;
+          color: var(--ink);
+        }
+        .zt-step p {
+          margin: 0;
+          font-size: 13px;
+          line-height: 1.5;
+          color: var(--muted);
+        }
+
+        /* METERS & RESULTS */
+        .zt-meter { margin-bottom: 14px; }
+        .zt-meter-head {
+          display: flex;
+          justify-content: space-between;
+          font-size: 13px;
+          font-weight: 700;
+          margin-bottom: 6px;
+        }
+        .zt-meter-track {
+          width: 100%;
+          height: 10px;
+          background: var(--surface-2);
+          border: 1.5px solid var(--border);
+          border-radius: 999px;
+          overflow: hidden;
+        }
+        .zt-meter-fill {
+          height: 100%;
+          border-radius: 999px;
+          transition: width 0.5s ease;
+        }
+        .zt-verdict {
+          padding: 14px 16px;
+          border-radius: 14px;
+          text-align: center;
+          font-size: 15px;
+          font-weight: 800;
+          margin: 18px 0;
+          border: 1.5px solid;
+        }
+        .zt-verdict.ai {
+          background: var(--rose-soft);
+          color: var(--rose-ink);
+          border-color: var(--rose);
+        }
+        .zt-verdict.real {
+          background: var(--mint-soft);
+          color: var(--mint-ink);
+          border-color: var(--mint);
+        }
+
+        .zt-exif-box {
+          border: 1.5px solid var(--border);
+          border-radius: 14px;
+          padding: 14px 16px;
+          background: var(--surface-2);
+          position: relative;
+          overflow: hidden;
+          margin-bottom: 20px;
+        }
+        .zt-exif-row {
+          display: flex;
+          justify-content: space-between;
+          gap: 12px;
+          font-size: 13px;
+          padding: 7px 0;
+          border-bottom: 1px solid var(--border);
+        }
+        .zt-exif-row:last-child { border-bottom: none; }
+        .zt-exif-key { color: var(--muted); }
+        .zt-exif-val {
+          font-family: var(--font-mono);
+          font-size: 12px;
+          color: var(--ink);
+          font-weight: 600;
+          text-align: right;
+        }
+        .zt-blur {
+          filter: blur(4px);
+          user-select: none;
+          pointer-events: none;
+        }
+        .zt-lock-overlay {
+          position: absolute;
+          inset: 0;
+          background: rgba(0, 0, 0, 0.82);
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          gap: 10px;
+          padding: 16px;
+          text-align: center;
+        }
+
+        /* COLORFUL METRICS STRIP */
+        .zt-metrics {
+          display: grid;
+          grid-template-columns: repeat(4, 1fr);
+          gap: 16px;
+          margin-bottom: 64px;
+        }
+        .zt-metric-card {
+          border: 1.5px solid var(--border-strong);
+          border-radius: 16px;
+          padding: 22px 18px;
+          text-align: center;
+        }
+        .zt-metric-val {
+          font-size: 28px;
+          font-weight: 800;
+          letter-spacing: -0.02em;
+          margin-bottom: 4px;
+        }
+        .zt-metric-lbl {
+          font-size: 13px;
+          font-weight: 600;
+          color: var(--muted);
+        }
+
+        /* ENGINES BAR */
+        .zt-engines-bar {
+          background: var(--white);
+          border-top: 1.5px solid var(--border);
+          border-bottom: 1.5px solid var(--border);
+          padding: 20px 0;
+        }
+        .zt-engines-inner {
+          max-width: 1140px;
+          margin: 0 auto;
+          padding: 0 24px;
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          justify-content: center;
+          gap: 10px;
+        }
+
+        /* SECTIONS */
+        .zt-section { padding: 76px 0; background: var(--paper); }
+        .zt-section-white {
+          background: var(--white);
+          border-top: 1.5px solid var(--border);
+          border-bottom: 1.5px solid var(--border);
+        }
+        .zt-section-head {
+          margin-bottom: 40px;
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-end;
+          gap: 20px;
+          flex-wrap: wrap;
+        }
+        .zt-section-head.center {
+          flex-direction: column;
+          align-items: center;
+          text-align: center;
+        }
+        .zt-section-head h2 {
+          margin: 0 0 8px;
+          font-size: clamp(26px, 3.4vw, 36px);
+          font-weight: 800;
+          letter-spacing: -0.025em;
+          color: var(--ink);
+        }
+        .zt-section-head p {
+          margin: 0;
+          font-size: 15px;
+          color: var(--muted);
+          max-width: 560px;
+        }
+
+        /* CAROUSEL */
+        .zt-carousel {
+          background: var(--white);
+          border: 1.5px solid var(--border-strong);
+          border-radius: 20px;
+          overflow: hidden;
+          display: grid;
+          grid-template-columns: 1.2fr 1fr;
+        }
+        .zt-carousel-media {
+          position: relative;
+          min-height: 360px;
+          background: #000000;
+          border-right: 1.5px solid var(--border);
+        }
+        .zt-carousel-media img {
+          width: 100%;
+          height: 100%;
+          max-height: 430px;
+          object-fit: cover;
+          display: block;
+        }
+        .zt-carousel-tag {
+          position: absolute;
+          top: 16px;
+          left: 16px;
+          padding: 7px 14px;
+          border-radius: 999px;
+          font-size: 12px;
+          font-weight: 800;
+          border: 1.5px solid #000000;
+        }
+        .zt-carousel-body {
+          padding: 36px;
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
+        }
+        .zt-carousel-body h3 {
+          margin: 14px 0 10px;
+          font-size: 23px;
+          font-weight: 800;
+          letter-spacing: -0.02em;
+          color: var(--ink);
+        }
+        .zt-carousel-body p {
+          margin: 0 0 20px;
+          font-size: 14px;
+          line-height: 1.65;
+          color: var(--muted);
+        }
+        .zt-telemetry-note {
+          padding: 12px 14px;
+          background: var(--surface-2);
+          border: 1.5px solid var(--border);
+          border-radius: 12px;
+          font-family: var(--font-mono);
+          font-size: 12px;
+          font-weight: 600;
+          color: var(--ink);
+          margin-bottom: 24px;
+        }
+        .zt-dots { display: flex; gap: 8px; }
+        .zt-dot {
+          height: 8px;
+          border-radius: 99px;
+          border: none;
+          cursor: pointer;
+          transition: all 0.2s ease;
+        }
+
+        /* GRIDS & CARDS */
+        .zt-grid-3 {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 24px;
+        }
+        .zt-card {
+          background: var(--surface-2);
+          border: 1.5px solid var(--border);
+          border-radius: 18px;
+          overflow: hidden;
+          display: flex;
+          flex-direction: column;
+          transition: transform 0.16s ease, border-color 0.16s ease;
+        }
+        .zt-card:hover {
+          border-color: var(--border-strong);
+          transform: translateY(-3px);
+        }
+        .zt-card-accent { height: 5px; width: 100%; }
+        .zt-card-img {
+          width: 100%;
+          height: 196px;
+          object-fit: cover;
+          display: block;
+          border-bottom: 1.5px solid var(--border);
+        }
+        .zt-card-body {
+          padding: 24px;
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+        }
+        .zt-card-body h3 {
+          margin: 0 0 8px;
+          font-size: 18px;
+          font-weight: 700;
+          color: var(--ink);
+        }
+        .zt-card-body p {
+          margin: 0;
+          font-size: 14px;
+          line-height: 1.6;
+          color: var(--muted);
+        }
+
+        /* SEGMENTED SWITCHES */
+        .zt-controls-row {
+          display: flex;
+          flex-wrap: wrap;
+          justify-content: center;
+          gap: 12px;
+          margin-top: 24px;
+        }
+        .zt-segmented {
+          display: inline-flex;
+          padding: 4px;
+          background: var(--paper);
+          border: 1.5px solid var(--border-strong);
+          border-radius: 12px;
+          gap: 4px;
+        }
+        .zt-seg-btn {
+          border: none;
+          background: transparent;
+          color: var(--muted);
+          font-size: 13px;
+          font-weight: 700;
+          padding: 8px 14px;
+          border-radius: 8px;
+          cursor: pointer;
+          transition: all 0.15s ease;
+        }
+        .zt-seg-btn.active {
+          background: #FFFFFF;
+          color: #000000;
+        }
+        .zt-save-pill {
+          background: var(--yellow);
+          color: #000000;
+          font-size: 11px;
+          font-weight: 800;
+          padding: 2px 7px;
+          border-radius: 999px;
+          margin-left: 6px;
+        }
+
+        /* PRICING CARDS */
+        .zt-price-card {
+          background: var(--paper);
+          border: 1.5px solid var(--border);
+          border-radius: 20px;
+          padding: 32px;
+          display: flex;
+          flex-direction: column;
+          position: relative;
+        }
+        .zt-price-card.featured {
+          border: 2px solid var(--blue);
+          background: #080E1A;
+        }
+        .zt-price-badge {
+          position: absolute;
+          top: -14px;
+          left: 24px;
+          background: var(--yellow);
+          color: #000000;
+          border: 1.5px solid #000000;
+          font-size: 11px;
+          font-weight: 800;
+          letter-spacing: 0.04em;
+          padding: 4px 12px;
+          border-radius: 999px;
+        }
+        .zt-price-amount {
+          font-size: 42px;
+          font-weight: 800;
+          letter-spacing: -0.03em;
+          color: var(--ink);
+          line-height: 1;
+        }
+        .zt-feature-list {
+          list-style: none;
+          padding: 0;
+          margin: 24px 0 0;
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+        .zt-feature-list li {
+          display: flex;
+          align-items: flex-start;
+          gap: 10px;
+          font-size: 14px;
+          color: var(--muted);
+        }
+        .zt-check {
+          width: 20px;
+          height: 20px;
+          border-radius: 6px;
+          background: var(--mint-soft);
+          color: var(--mint-ink);
+          font-size: 12px;
+          font-weight: 800;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+        }
+
+        /* CYBER BANNER */
+        .zt-cyber-box {
+          background: var(--rose-soft);
+          border: 1.5px solid var(--rose);
+          border-radius: 18px;
+          padding: 28px 32px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 24px;
+          flex-wrap: wrap;
+        }
+
+        /* FAQ */
+        .zt-faq-list {
+          max-width: 760px;
+          margin: 0 auto;
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+        .zt-faq-item {
+          background: var(--paper);
+          border: 1.5px solid var(--border);
+          border-radius: 14px;
+          overflow: hidden;
+        }
+        .zt-faq-q {
+          width: 100%;
+          background: transparent;
+          border: none;
+          padding: 18px 20px;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 16px;
+          font-size: 15px;
+          font-weight: 700;
+          color: var(--ink);
+          text-align: left;
+          cursor: pointer;
+        }
+        .zt-faq-plus {
+          width: 28px;
+          height: 28px;
+          border-radius: 8px;
+          background: var(--surface-2);
+          border: 1.5px solid var(--border);
+          color: var(--ink);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-family: var(--font-mono);
+          font-size: 16px;
+          flex-shrink: 0;
+        }
+        .zt-faq-a {
+          padding: 0 20px 18px;
+          font-size: 14px;
+          line-height: 1.65;
+          color: var(--muted);
+        }
+
+        /* MODALS */
+        .zt-modal-overlay {
           position: fixed;
-          top: 0; left: 0; right: 0; bottom: 0;
-          background: rgba(0, 0, 0, 0.85);
-          backdrop-filter: blur(10px);
+          inset: 0;
+          background: rgba(0, 0, 0, 0.82);
           z-index: 9999;
           display: flex;
           align-items: center;
           justify-content: center;
-          padding: 1rem;
+          padding: 20px;
+        }
+        .zt-modal {
+          background: var(--white);
+          border: 1.5px solid var(--border-strong);
+          border-radius: 20px;
+          width: 100%;
+          max-width: 460px;
+          padding: 32px;
+          position: relative;
+        }
+        .zt-modal-close {
+          position: absolute;
+          top: 16px;
+          right: 16px;
+          width: 34px;
+          height: 34px;
+          border-radius: 10px;
+          border: 1.5px solid var(--border);
+          background: var(--surface-2);
+          color: var(--ink);
+          cursor: pointer;
+          font-size: 18px;
+          font-weight: 700;
+        }
+        .zt-modal-close:hover { border-color: var(--ink); }
+        .zt-field {
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+          margin-bottom: 14px;
+        }
+        .zt-field label {
+          font-size: 13px;
+          font-weight: 600;
+          color: var(--ink);
+        }
+        .zt-input {
+          width: 100%;
+          padding: 11px 13px;
+          border: 1.5px solid var(--border-strong);
+          border-radius: 10px;
+          font-size: 14px;
+          color: var(--ink);
+          background: var(--surface-2);
+          font-family: var(--font-sans);
+        }
+        .zt-input:focus {
+          outline: none;
+          border-color: var(--blue);
+          background: #000000;
+        }
+        .zt-input::placeholder { color: var(--subtle); }
+        .zt-key-box {
+          background: var(--yellow-soft);
+          border: 1.5px solid var(--yellow);
+          border-radius: 12px;
+          padding: 12px 14px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          margin: 16px 0;
+        }
+        .zt-key-code {
+          font-family: var(--font-mono);
+          font-size: 14px;
+          font-weight: 700;
+          color: var(--yellow-ink);
+          word-break: break-all;
+        }
+        .zt-warn-box {
+          background: var(--rose-soft);
+          border: 1.5px solid var(--rose);
+          border-radius: 12px;
+          padding: 12px 14px;
+          font-size: 13px;
+          line-height: 1.5;
+          color: var(--rose-ink);
+          margin-bottom: 20px;
+        }
+
+        /* 1-TAP UP */
+        .zt-scroll-top {
+          position: fixed;
+          right: 24px;
+          bottom: 24px;
+          z-index: 900;
+          width: 48px;
+          height: 48px;
+          border-radius: 14px;
+          background: var(--yellow);
+          color: #000000;
+          border: 1.5px solid #000000;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          transition: transform 0.15s ease;
+        }
+        .zt-scroll-top:hover { transform: translateY(-2px); }
+
+        /* FOOTER */
+        .zt-footer {
+          border-top: 1.5px solid var(--border);
+          background: #000000;
+          padding: 28px 0;
+          margin-top: auto;
+        }
+        .zt-footer-inner {
+          max-width: 1140px;
+          margin: 0 auto;
+          padding: 0 24px;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          flex-wrap: wrap;
+          gap: 16px;
+          font-size: 13px;
+          color: var(--muted);
+        }
+
+        /* SPINNER */
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .zt-spinner {
+          width: 36px;
+          height: 36px;
+          border: 3px solid var(--border-strong);
+          border-top-color: var(--yellow);
+          border-radius: 50%;
+          animation: spin 0.7s linear infinite;
+          margin: 0 auto 16px;
+        }
+
+        @media (max-width: 900px) {
+          .zt-workspace, .zt-carousel, .zt-grid-3 { grid-template-columns: 1fr; }
+          .zt-pane-left { border-right: none; border-bottom: 1.5px solid var(--border); }
+          .zt-carousel-media { border-right: none; border-bottom: 1.5px solid var(--border); }
+          .zt-metrics { grid-template-columns: repeat(2, 1fr); }
+          .zt-nav { display: none; }
         }
       `,
         }}
       />
 
-      {/* ACCREDITATION POPUP MODAL */}
-      {showModal && (
-        <div className="modal-overlay" onClick={() => setShowModal(false)}>
-          <div
-            className="bento-item position-relative p-5 text-center"
-            style={{ maxWidth: "600px" }}
-            onClick={(e: React.MouseEvent) => e.stopPropagation()}
+      {/* 1-TAP BACK TO TOP */}
+      {showScrollTop && (
+        <button
+          className="zt-scroll-top"
+          onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+          title="Back to top"
+          aria-label="Scroll to top"
+        >
+          <svg
+            width="20"
+            height="20"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            viewBox="0 0 24 24"
           >
-            <button
-              className="btn-close btn-close-white position-absolute top-0 end-0 m-4"
-              onClick={() => setShowModal(false)}
-              aria-label="Close"
-            ></button>
-
-            <img
-              src="https://iipcindia.com/public/img/accreditations/accreditation2.png"
-              alt="Accreditation"
-              style={{ height: "70px", marginBottom: "1.5rem" }}
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M5 15l7-7 7 7"
             />
-            <h4 className="fw-bolder text-white mb-3">Official Recognition</h4>
-            <p className="text-neon fw-bold mb-4 fs-5">
-              Government of India Recognized MSME.
-            </p>
+          </svg>
+        </button>
+      )}
 
-            <p className="mb-4" style={{ color: "#cbd5e1", lineHeight: "1.6" }}>
-              This Website is Owned by Zen-Tech India and is Operated and
-              Maintained by T-Service Group (International). For authenticity,
-              this is developed in India and the company that made this is
-              Zen-Tech India.
-            </p>
-
-            <div
-              className="p-4 rounded-3 mb-4"
+      {/* PARTNER PAYMENT NOTICE MODAL */}
+      {pendingCheckoutPlan && (
+        <div
+          className="zt-modal-overlay"
+          onClick={() => setPendingCheckoutPlan(null)}
+        >
+          <div className="zt-modal" onClick={(e) => e.stopPropagation()}>
+            <button
+              className="zt-modal-close"
+              onClick={() => setPendingCheckoutPlan(null)}
+              aria-label="Close"
+            >
+              ×
+            </button>
+            <span
+              className="zt-pill"
               style={{
-                background: "rgba(0, 242, 254, 0.05)",
-                border: "1px solid rgba(0, 242, 254, 0.2)",
+                background: "var(--yellow-soft)",
+                color: "var(--yellow-ink)",
+                marginBottom: 12,
               }}
             >
-              <p className="small mb-3 text-white">
-                Zen-Tech India is a verified and registered enterprise under the
-                Ministry of Micro, Small & Medium Enterprises. We are committed
-                to delivering digital excellence that aligns with India's
-                national standards.
-              </p>
-              <h5 className="fw-bold mb-0 text-neon pt-3 border-top border-secondary border-opacity-25 mt-2">
-                Udyam Registration No. UDYAM-MH-27-0214642
-              </h5>
+              PAYMENT PARTNER NOTICE
+            </span>
+            <h3 style={{ margin: "0 0 10px", fontSize: 21, fontWeight: 800 }}>
+              Payments Handled by Zen-Tech International
+            </h3>
+            <p
+              style={{
+                margin: "0 0 14px",
+                fontSize: 14,
+                color: "var(--muted)",
+                lineHeight: 1.6,
+              }}
+            >
+              All payments are securely handled by our partner,{" "}
+              <strong style={{ color: "#FFFFFF" }}>
+                Zen-Tech International
+              </strong>
+              . While paying, you may see their name on the checkout screen this
+              is completely normal.
+            </p>
+            <div
+              className="zt-key-box"
+              style={{
+                flexDirection: "column",
+                alignItems: "flex-start",
+                gap: 6,
+                margin: "0 0 22px",
+              }}
+            >
+              <span
+                style={{
+                  fontSize: 12,
+                  color: "var(--muted)",
+                  fontWeight: 600,
+                }}
+              >
+                You will receive your confirmation &amp; Access Key only from:
+              </span>
+              <code className="zt-key-code">support.znxios@gmail.com</code>
+            </div>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button
+                type="button"
+                className="zt-btn zt-btn-white zt-btn-full"
+                onClick={() => setPendingCheckoutPlan(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="zt-btn zt-btn-blue zt-btn-full"
+                onClick={() => {
+                  const selected = pendingCheckoutPlan;
+                  setPendingCheckoutPlan(null);
+                  setCheckoutPlan(selected);
+                }}
+              >
+                Continue to Details
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CHECKOUT MODAL */}
+      {checkoutPlan && (
+        <div
+          className="zt-modal-overlay"
+          onClick={() => !checkoutLoading && setCheckoutPlan(null)}
+        >
+          <div className="zt-modal" onClick={(e) => e.stopPropagation()}>
+            <button
+              className="zt-modal-close"
+              onClick={() => setCheckoutPlan(null)}
+              disabled={checkoutLoading}
+              aria-label="Close"
+            >
+              ×
+            </button>
+            <span
+              className="zt-pill"
+              style={{
+                background: "var(--blue-soft)",
+                color: "var(--blue-ink)",
+                marginBottom: 12,
+              }}
+            >
+              {checkoutPlan === "enterprise" ? "ENTERPRISE" : "PROFESSIONAL"} •{" "}
+              {symbol}
+              {billingCycle === "yearly"
+                ? PRICE_DISPLAY[checkoutPlan][currency].yearly
+                : PRICE_DISPLAY[checkoutPlan][currency].monthly}
+              /{billingCycle === "yearly" ? "yr" : "mo"}
+              {billingCycle === "yearly" ? " (30% OFF)" : ""}
+            </span>
+            <h3 style={{ margin: "0 0 6px", fontSize: 21, fontWeight: 800 }}>
+              Complete Your Details
+            </h3>
+            <p
+              style={{
+                margin: "0 0 20px",
+                fontSize: 13,
+                color: "var(--muted)",
+                lineHeight: 1.55,
+              }}
+            >
+              {currency === "INR"
+                ? "Instant 1-Tap UPI & Card checkout via Razorpay. Your Access Key is emailed immediately."
+                : "Secure USD card checkout via Razorpay. Your Access Key is emailed immediately."}
+            </p>
+
+            <form onSubmit={startRazorpayCheckout}>
+              <div className="zt-field">
+                <label>Full Name</label>
+                <input
+                  type="text"
+                  required
+                  className="zt-input"
+                  placeholder="Enter your name"
+                  value={customerName}
+                  onChange={(e) => setCustomerName(e.target.value)}
+                />
+              </div>
+              <div className="zt-field">
+                <label>Email Address (Receives Access Key)</label>
+                <input
+                  type="email"
+                  required
+                  className="zt-input"
+                  placeholder="you@example.com"
+                  value={customerEmail}
+                  onChange={(e) => setCustomerEmail(e.target.value)}
+                />
+              </div>
+              <div className="zt-field">
+                <label>Phone Number</label>
+                <input
+                  type="tel"
+                  required
+                  pattern="[0-9+\-\s]{10,15}"
+                  className="zt-input"
+                  placeholder={
+                    currency === "INR" ? "+91 9876543210" : "+1 555 019 2834"
+                  }
+                  value={customerPhone}
+                  onChange={(e) => setCustomerPhone(e.target.value)}
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={checkoutLoading}
+                className="zt-btn zt-btn-blue zt-btn-full"
+                style={{ marginTop: 8 }}
+              >
+                {checkoutLoading
+                  ? "Opening Razorpay..."
+                  : `Pay ${symbol}${
+                      billingCycle === "yearly"
+                        ? PRICE_DISPLAY[checkoutPlan][currency].yearly
+                        : PRICE_DISPLAY[checkoutPlan][currency].monthly
+                    } via ${currency === "INR" ? "1-Tap UPI / Card" : "Razorpay"}`}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* POST-PAYMENT ACCESS KEY MODAL */}
+      {newOrderKey && (
+        <div className="zt-modal-overlay">
+          <div className="zt-modal">
+            <span
+              className="zt-pill"
+              style={{
+                background: "var(--mint-soft)",
+                color: "var(--mint-ink)",
+                marginBottom: 12,
+              }}
+            >
+              PAYMENT CONFIRMED
+            </span>
+            <h3 style={{ margin: "0 0 8px", fontSize: 22, fontWeight: 800 }}>
+              Save Your Access Key
+            </h3>
+            <p
+              style={{
+                margin: 0,
+                fontSize: 14,
+                color: "var(--muted)",
+                lineHeight: 1.55,
+              }}
+            >
+              Your{" "}
+              <strong style={{ textTransform: "capitalize", color: "#FFFFFF" }}>
+                {newOrderKey.plan}
+              </strong>{" "}
+              plan is active. A copy has also been emailed to{" "}
+              <strong style={{ color: "#FFFFFF" }}>{newOrderKey.email}</strong>.
+            </p>
+
+            <div className="zt-key-box">
+              <code className="zt-key-code">{newOrderKey.orderId}</code>
+              <button
+                className="zt-btn zt-btn-white zt-btn-sm"
+                onClick={() => {
+                  navigator.clipboard.writeText(newOrderKey.orderId);
+                  setCopiedKey(true);
+                  setTimeout(() => setCopiedKey(false), 2500);
+                }}
+              >
+                {copiedKey ? "Copied!" : "Copy"}
+              </button>
+            </div>
+
+            <div className="zt-warn-box">
+              <strong>Keep this safe:</strong> Because there is no account
+              login, this Order ID is your only Access Key. If you lose it and
+              clear browser data, your subscription cannot be recovered.
             </div>
 
             <button
-              className="btn btn-premium rounded-pill px-5 py-2 fw-bold"
+              className="zt-btn zt-btn-blue zt-btn-full"
+              onClick={() => setNewOrderKey(null)}
+            >
+              I Have Saved My Access Key
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* RESTORE / VIEW ACCESS KEY MODAL */}
+      {showRestoreModal && (
+        <div
+          className="zt-modal-overlay"
+          onClick={() => setShowRestoreModal(false)}
+        >
+          <div className="zt-modal" onClick={(e) => e.stopPropagation()}>
+            <button
+              className="zt-modal-close"
+              onClick={() => setShowRestoreModal(false)}
+              aria-label="Close"
+            >
+              ×
+            </button>
+            <h3 style={{ margin: "0 0 8px", fontSize: 20, fontWeight: 800 }}>
+              {isPaid ? "Active License" : "Restore Access Key"}
+            </h3>
+
+            {isPaid && subscription ? (
+              <div>
+                <p
+                  style={{
+                    margin: "0 0 12px",
+                    fontSize: 14,
+                    color: "var(--muted)",
+                  }}
+                >
+                  Plan:{" "}
+                  <strong
+                    style={{ textTransform: "uppercase", color: "var(--ink)" }}
+                  >
+                    {subscription.plan}
+                  </strong>
+                </p>
+                <div className="zt-key-box">
+                  <code className="zt-key-code">{subscription.orderId}</code>
+                  <button
+                    className="zt-btn zt-btn-white zt-btn-sm"
+                    onClick={() =>
+                      navigator.clipboard.writeText(subscription.orderId)
+                    }
+                  >
+                    Copy
+                  </button>
+                </div>
+                <button
+                  className="zt-btn zt-btn-rose zt-btn-sm"
+                  onClick={() => {
+                    if (
+                      confirm(
+                        "Remove this Access Key from your browser? Make sure you saved it first.",
+                      )
+                    ) {
+                      localStorage.removeItem("zentech_subscription");
+                      setSubscription(null);
+                      setShowRestoreModal(false);
+                    }
+                  }}
+                >
+                  Deactivate on This Browser
+                </button>
+              </div>
+            ) : (
+              <form onSubmit={handleRestoreKey}>
+                <p
+                  style={{
+                    margin: "0 0 16px",
+                    fontSize: 14,
+                    color: "var(--muted)",
+                    lineHeight: 1.55,
+                  }}
+                >
+                  Enter the Razorpay Order ID emailed to you after purchase to
+                  unlock your plan.
+                </p>
+                <div className="zt-field">
+                  <label>Order ID (Access Key)</label>
+                  <input
+                    type="text"
+                    required
+                    className="zt-input"
+                    placeholder="order_XXXXXXXXXXXXXX"
+                    value={restoreInput}
+                    onChange={(e) => setRestoreInput(e.target.value)}
+                  />
+                </div>
+                {restoreError && (
+                  <p
+                    style={{
+                      margin: "0 0 12px",
+                      fontSize: 13,
+                      color: "var(--rose-ink)",
+                      fontWeight: 600,
+                    }}
+                  >
+                    {restoreError}
+                  </p>
+                )}
+                <button
+                  type="submit"
+                  disabled={restoreLoading}
+                  className="zt-btn zt-btn-blue zt-btn-full"
+                >
+                  {restoreLoading ? "Verifying..." : "Unlock Plan"}
+                </button>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* MSME ACCREDITATION MODAL */}
+      {showModal && (
+        <div className="zt-modal-overlay" onClick={() => setShowModal(false)}>
+          <div
+            className="zt-modal"
+            style={{ textAlign: "center" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              className="zt-modal-close"
+              onClick={() => setShowModal(false)}
+              aria-label="Close"
+            >
+              ×
+            </button>
+            <div
+              style={{
+                display: "inline-block",
+                background: "#FFFFFF",
+                padding: "8px 14px",
+                borderRadius: 12,
+                marginBottom: 16,
+              }}
+            >
+              <img
+                src="https://iipcindia.com/public/img/accreditations/accreditation2.png"
+                alt="MSME Accreditation"
+                style={{ height: 48, display: "block" }}
+              />
+            </div>
+            <h3 style={{ margin: "0 0 6px", fontSize: 20, fontWeight: 800 }}>
+              Official MSME Recognition
+            </h3>
+            <p
+              style={{
+                margin: "0 0 16px",
+                fontSize: 14,
+                color: "var(--muted)",
+                lineHeight: 1.6,
+              }}
+            >
+              Owned by Znxios International and operated by T-Service Group
+              (International). Verified under the Ministry of Micro, Small &
+              Medium Enterprises, Government of India.
+            </p>
+            <div className="zt-key-box" style={{ justifyContent: "center" }}>
+              <code className="zt-key-code">UDYAM-MH-27-0214642</code>
+            </div>
+            <button
+              className="zt-btn zt-btn-blue zt-btn-full"
               onClick={() => setShowModal(false)}
             >
               Close
@@ -419,60 +2264,47 @@ export default function Home() {
         </div>
       )}
 
-      {/* CYBER CRIME AWARENESS MODAL */}
+      {/* CYBER CRIME MODAL */}
       {showCyberModal && (
-        <div className="modal-overlay" onClick={() => setShowCyberModal(false)}>
-          <div
-            className="bento-item position-relative p-5 text-center"
-            style={{
-              maxWidth: "600px",
-              border: "1px solid rgba(239, 68, 68, 0.5)",
-              background: "rgba(30, 10, 10, 0.9)",
-            }}
-            onClick={(e: React.MouseEvent) => e.stopPropagation()}
-          >
+        <div
+          className="zt-modal-overlay"
+          onClick={() => setShowCyberModal(false)}
+        >
+          <div className="zt-modal" onClick={(e) => e.stopPropagation()}>
             <button
-              className="btn-close btn-close-white position-absolute top-0 end-0 m-4"
+              className="zt-modal-close"
               onClick={() => setShowCyberModal(false)}
               aria-label="Close"
-            ></button>
-
-            <div className="mb-4 text-danger d-flex justify-content-center w-100">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="60"
-                height="60"
-                fill="currentColor"
-                viewBox="0 0 16 16"
-              >
-                <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z" />
-                <path d="M7.002 11a1 1 0 1 1 2 0 1 1 0 0 1-2 0zM7.1 4.995a.905.905 0 1 1 1.8 0l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 4.995z" />
-              </svg>
-            </div>
-            <h3 className="fw-bolder text-white mb-3">Important Notice</h3>
-
-            <p className="fs-5 mb-4 text-white" style={{ lineHeight: "1.6" }}>
-              Please don't misuse the portal you are about to visit.
-            </p>
-            <div
-              className="p-4 rounded-3 mb-4"
+            >
+              ×
+            </button>
+            <span
+              className="zt-pill"
               style={{
-                background: "rgba(239, 68, 68, 0.1)",
-                border: "1px solid rgba(239, 68, 68, 0.3)",
+                background: "var(--rose-soft)",
+                color: "var(--rose-ink)",
+                marginBottom: 12,
               }}
             >
-              <p className="mb-0 text-white fw-medium">
-                Make sure to give as many details as possible for the
-                investigation to help authorities take strict action.
-              </p>
-              <p className="mt-3 mb-0 text-danger fw-bold">
-                — Regards, Zen-Tech Cyber Team
-              </p>
-            </div>
-
-            <div className="d-flex gap-3 justify-content-center">
+              IMPORTANT NOTICE
+            </span>
+            <h3 style={{ margin: "0 0 10px", fontSize: 20, fontWeight: 800 }}>
+              Proceeding to Sanchar Saathi
+            </h3>
+            <p
+              style={{
+                margin: "0 0 22px",
+                fontSize: 14,
+                color: "var(--muted)",
+                lineHeight: 1.6,
+              }}
+            >
+              Please do not misuse the government portal. Submit complete and
+              accurate details so authorities can take strict action.
+            </p>
+            <div style={{ display: "flex", gap: 10 }}>
               <button
-                className="btn btn-outline-light rounded-pill px-4 py-2 fw-bold"
+                className="zt-btn zt-btn-white zt-btn-full"
                 onClick={() => setShowCyberModal(false)}
               >
                 Cancel
@@ -481,672 +2313,860 @@ export default function Home() {
                 href="https://sancharsaathi.gov.in/"
                 target="_blank"
                 rel="noreferrer"
-                className="btn btn-danger rounded-pill px-4 py-2 fw-bold"
+                className="zt-btn zt-btn-rose zt-btn-full"
                 onClick={() => setShowCyberModal(false)}
               >
-                Proceed to Portal
+                Open Portal
               </a>
             </div>
           </div>
         </div>
       )}
 
-      <div className="min-vh-100 d-flex flex-column awwwards-bg">
-        {/* PURE WHITE NAV BAR */}
-        <header
-          className="w-100 bg-white shadow-sm py-3 px-4 px-md-5 d-flex justify-content-between align-items-center sticky-top"
-          style={{ zIndex: 1000 }}
-        >
-          {/* Left: Logo */}
-          <div className="d-flex align-items-center" style={{ flex: "1" }}>
-            <img
-              src="https://zen-tech.vercel.app/Assets/zt-portrait-logo.png"
-              alt="Zen-Tech Logo"
-              style={{ height: "65px", width: "auto", objectFit: "contain" }}
-            />
-          </div>
-
-          {/* Center: Navigation Links with text-nowrap to prevent stacking */}
-          <nav
-            className="d-none d-md-flex align-items-center justify-content-center gap-4 gap-lg-5"
-            style={{ flex: "auto" }}
-          >
-            <a
-              href="#how-it-works"
-              className="text-decoration-none fw-bold fs-5 text-uppercase text-nowrap tracking-tight"
-              style={{ color: "#334155", letterSpacing: "1px" }}
-            >
-              How it Works
-            </a>
-            <a
-              href="#who-is-this-for"
-              className="text-decoration-none fw-bold fs-5 text-uppercase text-nowrap tracking-tight"
-              style={{ color: "#334155", letterSpacing: "1px" }}
-            >
-              Use Cases
-            </a>
-            <a
-              href="#pricing"
-              className="text-decoration-none fw-bold fs-5 text-uppercase text-nowrap tracking-tight"
-              style={{ color: "#334155", letterSpacing: "1px" }}
-            >
-              Pricing
-            </a>
-          </nav>
-
-          {/* Right: Accreditation Icon */}
-          <div
-            className="d-flex align-items-center justify-content-end"
-            style={{ flex: "1" }}
-          >
-            <div
-              style={{ cursor: "pointer" }}
-              onClick={() => setShowModal(true)}
-              title="View Recognition"
-            >
+      <div className="zt-page">
+        {/* HEADER */}
+        <header className="zt-header">
+          <div className="zt-header-inner">
+            <a href="#" className="zt-brand">
               <img
-                src="https://iipcindia.com/public/img/accreditations/accreditation2.png"
-                alt="Accredited"
-                style={{ height: "55px", width: "auto", objectFit: "contain" }}
+                src="/pixvertesa.png"
+                style={{
+                  display: "block",
+                  height: "58px",
+                  width: "auto",
+                  border: 0,
+                }}
+                alt=" Znxios International"
               />
+            </a>
+
+            <nav className="zt-nav">
+              <a href="#showcase">Examples</a>
+              <a href="#use-cases">Use Cases</a>
+              <a href="#pricing">Pricing</a>
+              <a href="#faq">FAQ</a>
+            </nav>
+
+            <div className="zt-header-actions">
+              <button
+                onClick={() => setShowRestoreModal(true)}
+                className={`zt-btn zt-btn-sm ${isPaid ? "zt-btn-mint" : "zt-btn-yellow"}`}
+              >
+                {isPaid ? `${currentPlan.toUpperCase()} ACTIVE` : "Access Key"}
+              </button>
             </div>
           </div>
         </header>
 
-        {/* 1. HERO & SCANNER */}
-        <main
-          className="container-fluid d-flex flex-column align-items-center justify-content-center py-5"
-          style={{ minHeight: "85vh" }}
-        >
-          <div
-            className="text-center mb-5 w-100 mt-4"
-            style={{ maxWidth: "900px" }}
-          >
-            <h1
-              className="display-3 fw-bolder mb-4 text-gradient"
-              style={{ letterSpacing: "-2px", lineHeight: "1.1" }}
-            >
-              Check if an image is
-              <br />
-              Real or AI-Generated.
+        {/* HERO & SCANNER */}
+        <main className="zt-wrap">
+          <div className="zt-hero">
+            <h1>
+              Is that image <span className="zt-highlight">real or AI?</span>
             </h1>
-            <p
-              className="lead fw-normal mx-auto"
-              style={{ color: "#94a3b8", maxWidth: "600px" }}
-            >
-              Upload any picture to see if it was made by a human or an AI.
-              Trusted by over 100,000 users with 99.98% accuracy.
+            <p>
+              Drop any photo for instant forensic checking, EXIF metadata
+              inspection, and AI model attribution with zero image storage.
             </p>
           </div>
 
-          {/* THE 3D SCANNER CARD */}
-          <div
-            className="scanner-card w-100 mb-5"
-            style={{ maxWidth: "1100px" }}
-          >
-            <div className="row g-0">
-              {/* Centered Interactive Dropzone */}
+          <div className="zt-workspace">
+            {/* LEFT: UPLOAD / PREVIEW / BATCH */}
+            <div className="zt-pane-left">
               <div
-                className="col-md-6 p-4 p-md-5 position-relative d-flex flex-column align-items-center justify-content-center"
-                style={{ borderRight: "1px solid rgba(255, 255, 255, 0.05)" }}
+                className={`zt-dropzone ${isDragging ? "dragging" : ""}`}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+                onClick={() => {
+                  if (!loading && !batchRunning && !limitReached)
+                    fileInputRef.current?.click();
+                }}
+                style={{
+                  cursor: limitReached
+                    ? "not-allowed"
+                    : loading
+                      ? "wait"
+                      : "pointer",
+                }}
               >
-                <div
-                  className="d-flex flex-column align-items-center justify-content-center rounded-4 position-relative transition-all h-100 w-100 overflow-hidden"
-                  onDragOver={handleDragOver}
-                  onDragLeave={handleDragLeave}
-                  onDrop={handleDrop}
-                  onClick={() => {
-                    if (!loading && usageCount < MAX_LIMIT)
-                      fileInputRef.current?.click();
-                  }}
-                  style={{
-                    minHeight: "450px",
-                    cursor:
-                      usageCount >= MAX_LIMIT
-                        ? "not-allowed"
-                        : loading
-                          ? "wait"
-                          : "pointer",
-                    border:
-                      usageCount >= MAX_LIMIT
-                        ? "2px dashed rgba(239,68,68,0.3)"
-                        : isDragging
-                          ? "2px solid #00f2fe"
-                          : "2px dashed rgba(255, 255, 255, 0.1)",
-                    background:
-                      usageCount >= MAX_LIMIT
-                        ? "rgba(239,68,68,0.05)"
-                        : isDragging
-                          ? "rgba(0, 242, 254, 0.05)"
-                          : "transparent",
-                    transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-                  }}
-                >
-                  <input
-                    type="file"
-                    className="d-none"
-                    accept="image/*"
-                    onChange={handleImageChange}
-                    ref={fileInputRef}
-                    disabled={loading || usageCount >= MAX_LIMIT}
-                  />
+                <input
+                  type="file"
+                  style={{ display: "none" }}
+                  accept="image/*"
+                  multiple={isEnterprise}
+                  onChange={handleImageChange}
+                  ref={fileInputRef}
+                  disabled={loading || batchRunning || limitReached}
+                />
 
-                  {usageCount >= MAX_LIMIT ? (
-                    <div className="text-center p-4 d-flex flex-column align-items-center justify-content-center w-100 h-100">
-                      <div className="mb-4 text-danger opacity-75 d-flex justify-content-center w-100">
-                        <svg
-                          xmlns="http://www.w3.org/2000/svg"
-                          width="96"
-                          height="96"
-                          fill="currentColor"
-                          viewBox="0 0 16 16"
-                        >
-                          <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z" />
-                          <path d="M7.002 11a1 1 0 1 1 2 0 1 1 0 0 1-2 0zM7.1 4.995a.905.905 0 1 1 1.8 0l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 4.995z" />
-                        </svg>
-                      </div>
-                      <h3 className="fw-bolder mb-2 text-white">
-                        Daily Limit Reached
-                      </h3>
-                      <p className="mb-0 fs-5 text-danger px-3">
-                        Your 10 daily limit is reached. Please wait for another
-                        24 hours or upgrade your plan.
-                      </p>
+                {limitReached ? (
+                  <div>
+                    <h3 className="zt-drop-title">Daily free limit reached</h3>
+                    <p className="zt-drop-sub" style={{ maxWidth: 300 }}>
+                      You&apos;ve used all 10 free scans today. Upgrade for
+                      unlimited scans & EXIF data.
+                    </p>
+                    <button
+                      className="zt-btn zt-btn-blue"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setPendingCheckoutPlan("pro");
+                      }}
+                    >
+                      Upgrade to Pro
+                    </button>
+                  </div>
+                ) : batchQueue.length > 1 ? (
+                  <div style={{ width: "100%" }}>
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        marginBottom: 12,
+                      }}
+                    >
+                      <span className="zt-kicker" style={{ margin: 0 }}>
+                        Batch Queue ({batchQueue.length} files)
+                      </span>
+                      <span style={{ fontSize: 12, color: "var(--muted)" }}>
+                        Click to replace
+                      </span>
                     </div>
-                  ) : imagePreview ? (
-                    <div className="p-4 w-100 h-100 d-flex flex-column align-items-center justify-content-center position-relative">
-                      {loading && <div className="laser"></div>}
-                      <div className="position-relative w-100 d-flex justify-content-center">
-                        <img
-                          src={imagePreview}
-                          alt="Target Image"
-                          className="img-fluid rounded-3 shadow-lg"
-                          style={{
-                            maxHeight: "350px",
-                            objectFit: "contain",
-                            filter: loading
-                              ? "contrast(120%) brightness(80%) sepia(20%) hue-rotate(180deg)"
-                              : "none",
-                            transition: "filter 0.5s ease",
-                          }}
-                        />
-                        {loading && (
-                          <div
-                            className="position-absolute top-50 start-50 translate-middle text-neon fw-bolder fs-3"
+                    <div className="zt-batch-list">
+                      {batchQueue.map((item, idx) => (
+                        <div key={idx} className="zt-batch-row">
+                          <div className="zt-batch-file">
+                            <img src={item.preview} alt="" />
+                            <span className="zt-batch-name">
+                              {item.file.name}
+                            </span>
+                          </div>
+                          <span
+                            className="zt-pill"
                             style={{
-                              textShadow: "0 0 20px #00f2fe",
-                              mixBlendMode: "difference",
+                              background:
+                                item.status === "done"
+                                  ? item.result?.isAi
+                                    ? "var(--rose-soft)"
+                                    : "var(--mint-soft)"
+                                  : "var(--yellow-soft)",
+                              color:
+                                item.status === "done"
+                                  ? item.result?.isAi
+                                    ? "var(--rose-ink)"
+                                    : "var(--mint-ink)"
+                                  : "var(--yellow-ink)",
                             }}
                           >
-                            SCANNING
-                          </div>
-                        )}
-                      </div>
+                            {item.status === "done"
+                              ? `${item.result?.isAi ? "AI" : "REAL"} ${item.result?.confidence}%`
+                              : item.status.toUpperCase()}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : imagePreview ? (
+                  <div style={{ width: "100%", position: "relative" }}>
+                    {loading && <div className="zt-scan-bar" />}
+                    <img
+                      src={imagePreview}
+                      alt="Uploaded preview"
+                      style={{
+                        maxWidth: "100%",
+                        maxHeight: 310,
+                        objectFit: "contain",
+                        borderRadius: 12,
+                        border: "1.5px solid var(--border)",
+                        opacity: loading ? 0.78 : 1,
+                        transition: "opacity 0.25s ease",
+                      }}
+                    />
+                    <div className="zt-pill-row" style={{ marginTop: 14 }}>
                       <span
-                        className="badge rounded-pill mt-4 px-3 py-2 fw-normal"
+                        className="zt-pill"
                         style={{
-                          background: "rgba(0,0,0,0.6)",
-                          border: "1px solid rgba(255,255,255,0.1)",
-                          color: "#94a3b8",
+                          background: "var(--blue-soft)",
+                          color: "var(--blue-ink)",
                         }}
                       >
                         {image?.name}
                       </span>
-                    </div>
-                  ) : (
-                    <div className="text-center p-4 d-flex flex-column align-items-center justify-content-center w-100 h-100">
-                      <div className="mb-4 text-white opacity-50 d-flex justify-content-center w-100">
-                        <svg
-                          xmlns="http://www.w3.org/2000/svg"
-                          width="96"
-                          height="96"
-                          fill="currentColor"
-                          viewBox="0 0 16 16"
-                        >
-                          <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z" />
-                          <path d="M7.646 1.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1-.708.708L8.5 2.707V11.5a.5.5 0 0 1-1 0V2.707L5.354 4.854a.5.5 0 1 1-.708-.708l3-3z" />
-                        </svg>
-                      </div>
-                      <h3
-                        className="fw-bolder mb-2 text-white"
-                        style={{ letterSpacing: "1px" }}
-                      >
-                        Upload Your Image
-                      </h3>
-                      <p className="mb-0 fs-5" style={{ color: "#64748b" }}>
-                        Drag & drop a picture here, or click to choose a file.
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Right Panel: Results OR "How It Works" */}
-              <div
-                className="col-md-6 p-4 p-md-5 d-flex flex-column justify-content-center"
-                id="how-it-works"
-              >
-                {loading ? (
-                  <div className="h-100 d-flex flex-column justify-content-center align-items-center text-center">
-                    <div
-                      className="spinner-border mb-4"
-                      style={{
-                        width: "3.5rem",
-                        height: "3.5rem",
-                        color: "#00f2fe",
-                      }}
-                      role="status"
-                    ></div>
-                    <h5
-                      className="fw-bolder text-neon"
-                      style={{ letterSpacing: "3px" }}
-                    >
-                      ANALYZING IMAGE...
-                    </h5>
-                    <p className="fs-5" style={{ color: "#64748b" }}>
-                      Looking for hidden signs of AI generation...
-                    </p>
-                  </div>
-                ) : result ? (
-                  <div className="h-100 d-flex flex-column justify-content-center">
-                    <h5
-                      className="text-uppercase fw-bold mb-4 pb-3 text-white"
-                      style={{
-                        borderBottom: "1px solid rgba(255,255,255,0.1)",
-                        letterSpacing: "2px",
-                      }}
-                    >
-                      Detection Results
-                    </h5>
-
-                    <div className="mb-4">
-                      <div className="d-flex justify-content-between mb-2">
+                      {exifData?.fileSize && (
                         <span
-                          className="fw-bold fs-5"
-                          style={{ color: "#10b981", letterSpacing: "1px" }}
-                        >
-                          Real Photograph
-                        </span>
-                        <span
-                          className="fw-bold fs-5"
-                          style={{ color: "#10b981" }}
-                        >
-                          {probs.real}%
-                        </span>
-                      </div>
-                      <div
-                        className="progress rounded-pill"
-                        style={{
-                          height: "8px",
-                          background: "rgba(255,255,255,0.05)",
-                        }}
-                      >
-                        <div
-                          className="progress-bar rounded-pill"
-                          role="progressbar"
+                          className="zt-pill"
                           style={{
-                            width: `${probs.real}%`,
-                            background: "#10b981",
-                            boxShadow: "0 0 15px rgba(16,185,129,0.5)",
+                            background: "var(--mint-soft)",
+                            color: "var(--mint-ink)",
                           }}
-                        ></div>
-                      </div>
-                    </div>
-
-                    <div className="mb-5">
-                      <div className="d-flex justify-content-between mb-2">
-                        <span
-                          className="fw-bold fs-5"
-                          style={{ color: "#ef4444", letterSpacing: "1px" }}
                         >
-                          AI Generated
+                          {exifData.fileSize}
                         </span>
-                        <span
-                          className="fw-bold fs-5"
-                          style={{ color: "#ef4444" }}
-                        >
-                          {probs.ai}%
-                        </span>
-                      </div>
-                      <div
-                        className="progress rounded-pill"
-                        style={{
-                          height: "8px",
-                          background: "rgba(255,255,255,0.05)",
-                        }}
-                      >
-                        <div
-                          className="progress-bar rounded-pill"
-                          role="progressbar"
-                          style={{
-                            width: `${probs.ai}%`,
-                            background: "#ef4444",
-                            boxShadow: "0 0 15px rgba(239,68,68,0.5)",
-                          }}
-                        ></div>
-                      </div>
-                    </div>
-
-                    <div
-                      className="text-center mb-5 p-4 rounded-4"
-                      style={{
-                        background: result.isAi
-                          ? "rgba(239, 68, 68, 0.05)"
-                          : "rgba(16, 185, 129, 0.05)",
-                        border: `1px solid ${result.isAi ? "rgba(239,68,68,0.3)" : "rgba(16,185,129,0.3)"}`,
-                      }}
-                    >
-                      <h2
-                        className={`fw-bolder m-0 ${result.isAi ? "text-danger" : "text-success"}`}
-                        style={{
-                          textShadow: `0 0 20px ${result.isAi ? "rgba(239,68,68,0.4)" : "rgba(16,185,129,0.4)"}`,
-                        }}
-                      >
-                        {result.isAi
-                          ? "THIS IMAGE IS AI GENERATED"
-                          : "THIS IMAGE IS REAL"}
-                      </h2>
-                    </div>
-
-                    <button
-                      className="btn btn-outline-light py-3 fw-bold w-100 rounded-pill transition-all text-uppercase fs-5 mb-4"
-                      onClick={resetScanner}
-                      style={{ letterSpacing: "1px" }}
-                    >
-                      Scan Another Image
-                    </button>
-
-                    <div className="mt-2 px-2">
-                      <div
-                        className="d-flex justify-content-between mb-2"
-                        style={{ fontSize: "0.9rem", color: "#94a3b8" }}
-                      >
-                        <span>Daily Free Scans Used</span>
-                        <span className="fw-bold text-white">
-                          {usageCount} / 10
-                        </span>
-                      </div>
-                      <div
-                        className="progress rounded-pill"
-                        style={{
-                          height: "6px",
-                          background: "rgba(255,255,255,0.1)",
-                        }}
-                      >
-                        <div
-                          className="progress-bar"
-                          style={{
-                            width: `${(usageCount / 10) * 100}%`,
-                            background: "var(--neon-purple)",
-                          }}
-                        ></div>
-                      </div>
+                      )}
                     </div>
                   </div>
                 ) : (
-                  <div className="h-100 d-flex flex-column justify-content-center">
-                    <h5
-                      className="text-uppercase fw-bold mb-5 text-white"
-                      style={{ letterSpacing: "2px" }}
-                    >
-                      HOW IT WORKS
-                    </h5>
-
-                    <div className="d-flex flex-column gap-5">
-                      <div className="d-flex align-items-start gap-4">
-                        <div className="text-white flex-shrink-0 opacity-75">
-                          <svg
-                            xmlns="http://www.w3.org/2000/svg"
-                            width="32"
-                            height="32"
-                            fill="currentColor"
-                            viewBox="0 0 16 16"
-                          >
-                            <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z" />
-                            <path d="M10.97 4.97a.235.235 0 0 0-.02.022L7.477 9.417 5.384 7.323a.75.75 0 0 0-1.06 1.06L6.97 11.03a.75.75 0 0 0 1.079-.02l3.992-4.99a.75.75 0 0 0-1.071-1.05z" />
-                          </svg>
-                        </div>
-                        <div>
-                          <h5 className="mb-2 fw-bold text-white">
-                            Deep Image Scanning
-                          </h5>
-                          <p
-                            className="fs-6 mb-0"
-                            style={{ color: "#94a3b8", lineHeight: "1.6" }}
-                          >
-                            We look at the hidden data inside the picture to
-                            find out exactly where it came from.
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="d-flex align-items-start gap-4">
-                        <div className="text-white flex-shrink-0 opacity-75">
-                          <svg
-                            xmlns="http://www.w3.org/2000/svg"
-                            width="32"
-                            height="32"
-                            fill="currentColor"
-                            viewBox="0 0 16 16"
-                          >
-                            <path d="M14 1a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1h12zM2 0a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2H2z" />
-                          </svg>
-                        </div>
-                        <div>
-                          <h5 className="mb-2 fw-bold text-white">
-                            Pixel Checker
-                          </h5>
-                          <p
-                            className="fs-6 mb-0"
-                            style={{ color: "#94a3b8", lineHeight: "1.6" }}
-                          >
-                            AI tools leave tiny mistakes that humans can't see,
-                            but our scanner easily spots them.
-                          </p>
-                        </div>
-                      </div>
+                  <div>
+                    <div className="zt-upload-badge">
+                      <svg
+                        width="28"
+                        height="28"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2.2"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M12 4v12m0-12l-4 4m4-4l4 4"
+                        />
+                      </svg>
                     </div>
-
-                    <div
-                      className="mt-5 pt-4"
-                      style={{
-                        borderTop: "1px solid rgba(255, 255, 255, 0.05)",
-                      }}
-                    >
-                      <button
-                        className={`btn w-100 py-3 rounded-pill fw-bolder text-uppercase fs-5 ${usageCount >= MAX_LIMIT ? "btn-outline-danger" : "btn-premium"}`}
-                        onClick={() => {
-                          if (usageCount >= MAX_LIMIT) {
-                            alert(
-                              "Your 10 daily limit reached. Please wait for another 24 hours or upgrade your plan.",
-                            );
-                          } else {
-                            analyzeImage();
-                          }
-                        }}
-                        disabled={!image || loading}
+                    <h3 className="zt-drop-title">
+                      {isEnterprise
+                        ? "Drop single or multiple images"
+                        : "Upload your image"}
+                    </h3>
+                    <p className="zt-drop-sub">
+                      Drag and drop a file here, or click to browse
+                    </p>
+                    <div className="zt-pill-row">
+                      <span
+                        className="zt-pill"
                         style={{
-                          opacity: image ? 1 : 0.5,
-                          letterSpacing: "1px",
+                          background: "var(--blue-soft)",
+                          color: "var(--blue-ink)",
                         }}
                       >
-                        {usageCount >= MAX_LIMIT
-                          ? "Limit Reached"
-                          : "Check Image"}
-                      </button>
-
-                      <div className="mt-4 px-2">
-                        <div
-                          className="d-flex justify-content-between mb-2"
-                          style={{ fontSize: "0.9rem", color: "#94a3b8" }}
-                        >
-                          <span>Daily Free Scans Used</span>
-                          <span className="fw-bold text-white">
-                            {usageCount} / 10
-                          </span>
-                        </div>
-                        <div
-                          className="progress rounded-pill"
-                          style={{
-                            height: "6px",
-                            background: "rgba(255,255,255,0.1)",
-                          }}
-                        >
-                          <div
-                            className="progress-bar"
-                            style={{
-                              width: `${(usageCount / 10) * 100}%`,
-                              background: "var(--neon-purple)",
-                              transition: "width 0.5s ease",
-                            }}
-                          ></div>
-                        </div>
-                      </div>
+                        JPG
+                      </span>
+                      <span
+                        className="zt-pill"
+                        style={{
+                          background: "var(--yellow-soft)",
+                          color: "var(--yellow-ink)",
+                        }}
+                      >
+                        PNG
+                      </span>
+                      <span
+                        className="zt-pill"
+                        style={{
+                          background: "var(--violet-soft)",
+                          color: "var(--violet-ink)",
+                        }}
+                      >
+                        WEBP
+                      </span>
+                      <span
+                        className="zt-pill"
+                        style={{
+                          background: "var(--mint-soft)",
+                          color: "var(--mint-ink)",
+                        }}
+                      >
+                        UP TO {maxFileSizeMB}MB
+                      </span>
                     </div>
                   </div>
                 )}
               </div>
             </div>
+
+            {/* RIGHT: RESULTS OR STEPS */}
+            <div className="zt-pane-right">
+              {loading || batchRunning ? (
+                <div style={{ textAlign: "center", padding: "40px 0" }}>
+                  <div className="zt-spinner" />
+                  <h4
+                    style={{ margin: "0 0 6px", fontSize: 17, fontWeight: 700 }}
+                  >
+                    {isPaid ? "Running Priority Scan..." : "Analyzing Image..."}
+                  </h4>
+                  <p style={{ margin: 0, fontSize: 13, color: "var(--muted)" }}>
+                    Checking pixel patterns, compression signals, and EXIF tags.
+                  </p>
+                </div>
+              ) : result ? (
+                <div>
+                  <span className="zt-kicker">Scan Verdict</span>
+
+                  <div className="zt-meter">
+                    <div className="zt-meter-head">
+                      <span style={{ color: "var(--mint-ink)" }}>
+                        Authentic Photograph
+                      </span>
+                      <span
+                        style={{
+                          fontFamily: "var(--font-mono)",
+                          color: "var(--mint-ink)",
+                        }}
+                      >
+                        {probs.real}%
+                      </span>
+                    </div>
+                    <div className="zt-meter-track">
+                      <div
+                        className="zt-meter-fill"
+                        style={{
+                          width: `${probs.real}%`,
+                          background: "var(--mint)",
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="zt-meter">
+                    <div className="zt-meter-head">
+                      <span style={{ color: "var(--rose-ink)" }}>
+                        AI Generated
+                      </span>
+                      <span
+                        style={{
+                          fontFamily: "var(--font-mono)",
+                          color: "var(--rose-ink)",
+                        }}
+                      >
+                        {probs.ai}%
+                      </span>
+                    </div>
+                    <div className="zt-meter-track">
+                      <div
+                        className="zt-meter-fill"
+                        style={{
+                          width: `${probs.ai}%`,
+                          background: "var(--rose)",
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  <div className={`zt-verdict ${result.isAi ? "ai" : "real"}`}>
+                    {result.isAi
+                      ? "AI-Generated Image Detected"
+                      : "Verified Real Photograph"}
+                  </div>
+
+                  {/* PRO EXIF & ATTRIBUTION */}
+                  <div className="zt-exif-box">
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        marginBottom: 8,
+                      }}
+                    >
+                      <span className="zt-kicker" style={{ margin: 0 }}>
+                        AI Attribution & EXIF Data
+                      </span>
+                      {!isPaid && (
+                        <span
+                          className="zt-pill"
+                          style={{
+                            background: "var(--yellow)",
+                            color: "#000000",
+                          }}
+                        >
+                          PRO
+                        </span>
+                      )}
+                    </div>
+
+                    <div className={!isPaid ? "zt-blur" : ""}>
+                      <div className="zt-exif-row">
+                        <span className="zt-exif-key">Likely Engine</span>
+                        <span className="zt-exif-val">
+                          {resolveAiGenerator(result, exifData)}
+                        </span>
+                      </div>
+                      <div className="zt-exif-row">
+                        <span className="zt-exif-key">Resolution</span>
+                        <span className="zt-exif-val">
+                          {exifData?.dimensions || "N/A"} (
+                          {exifData?.fileSize || "N/A"})
+                        </span>
+                      </div>
+                      <div className="zt-exif-row">
+                        <span className="zt-exif-key">Camera</span>
+                        <span className="zt-exif-val">
+                          {exifData?.make || exifData?.model
+                            ? `${exifData.make || ""} ${exifData.model || ""}`.trim()
+                            : "No Camera EXIF"}
+                        </span>
+                      </div>
+                      <div className="zt-exif-row">
+                        <span className="zt-exif-key">Software Tag</span>
+                        <span className="zt-exif-val">
+                          {exifData?.software || "None / Stripped"}
+                        </span>
+                      </div>
+                    </div>
+
+                    {!isPaid && (
+                      <div className="zt-lock-overlay">
+                        <span
+                          style={{
+                            fontSize: 13,
+                            fontWeight: 700,
+                            color: "var(--ink)",
+                          }}
+                        >
+                          Unlock AI Engine & Hidden EXIF Data
+                        </span>
+                        <button
+                          className="zt-btn zt-btn-blue zt-btn-sm"
+                          onClick={() => setPendingCheckoutPlan("pro")}
+                        >
+                          Unlock Pro
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* SINGLE-IMAGE ACTION BAR WITH ENTERPRISE CSV DOWNLOAD */}
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                    {isEnterprise && (
+                      <button
+                        onClick={exportCsvReport}
+                        className="zt-btn zt-btn-mint"
+                        style={{ flex: 1 }}
+                      >
+                        <svg
+                          width="16"
+                          height="16"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2.2"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3"
+                          />
+                        </svg>
+                        Download CSV Report
+                      </button>
+                    )}
+                    <button
+                      onClick={resetScanner}
+                      className="zt-btn zt-btn-white"
+                      style={{ flex: 1 }}
+                    >
+                      Scan Another Image
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <span className="zt-kicker">How It Works</span>
+                  <div className="zt-steps">
+                    <div className="zt-step">
+                      <div
+                        className="zt-step-dot"
+                        style={{
+                          background: "var(--blue-soft)",
+                          color: "var(--blue-ink)",
+                        }}
+                      >
+                        01
+                      </div>
+                      <div>
+                        <h4>Deep Pixel Forensics</h4>
+                        <p>
+                          Finds invisible diffusion noise and synthesis
+                          fingerprints in milliseconds.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="zt-step">
+                      <div
+                        className="zt-step-dot"
+                        style={{
+                          background: "var(--coral-soft)",
+                          color: "var(--coral-ink)",
+                        }}
+                      >
+                        02
+                      </div>
+                      <div>
+                        <h4>EXIF & Source Engine</h4>
+                        <p>
+                          Reads hidden camera tags, editing software markers,
+                          and likely AI engines.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="zt-step">
+                      <div
+                        className="zt-step-dot"
+                        style={{
+                          background: "var(--mint-soft)",
+                          color: "var(--mint-ink)",
+                        }}
+                      >
+                        03
+                      </div>
+                      <div>
+                        <h4>Instant Privacy Purge</h4>
+                        <p>
+                          Every upload is scanned in memory and deleted right
+                          after your result.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <button
+                    className="zt-btn zt-btn-blue zt-btn-full"
+                    onClick={() =>
+                      limitReached
+                        ? setPendingCheckoutPlan("pro")
+                        : analyzeImage()
+                    }
+                    disabled={(!image && batchQueue.length === 0) || loading}
+                  >
+                    {limitReached
+                      ? "Upgrade to Continue"
+                      : batchQueue.length > 1
+                        ? `Run Batch Scan (${batchQueue.length} Images)`
+                        : "Check Image Now"}
+                  </button>
+
+                  {/* ENTERPRISE BATCH CSV DOWNLOAD BUTTON */}
+                  {isEnterprise &&
+                    batchQueue.some((b) => b.status === "done") && (
+                      <button
+                        onClick={exportCsvReport}
+                        className="zt-btn zt-btn-mint zt-btn-full"
+                        style={{ marginTop: 10 }}
+                      >
+                        <svg
+                          width="16"
+                          height="16"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2.2"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3"
+                          />
+                        </svg>
+                        Download Batch CSV Report
+                      </button>
+                    )}
+
+                  {/* QUOTA */}
+                  <div style={{ marginTop: 20 }}>
+                    {isPaid ? (
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          fontSize: 13,
+                          color: "var(--muted)",
+                        }}
+                      >
+                        <span>Scan Quota</span>
+                        <span
+                          className="zt-pill"
+                          style={{
+                            background: "var(--mint-soft)",
+                            color: "var(--mint-ink)",
+                          }}
+                        >
+                          UNLIMITED ({currentPlan.toUpperCase()})
+                        </span>
+                      </div>
+                    ) : (
+                      <>
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            fontSize: 13,
+                            color: "var(--muted)",
+                            marginBottom: 6,
+                          }}
+                        >
+                          <span>Daily Free Scans</span>
+                          <span
+                            style={{
+                              fontFamily: "var(--font-mono)",
+                              fontWeight: 700,
+                              color: "var(--ink)",
+                            }}
+                          >
+                            {usageCount} / {MAX_LIMIT}
+                          </span>
+                        </div>
+                        <div className="zt-meter-track">
+                          <div
+                            className="zt-meter-fill"
+                            style={{
+                              width: `${(usageCount / MAX_LIMIT) * 100}%`,
+                              background: "var(--blue)",
+                            }}
+                          />
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* PLAYFUL COLORFUL METRICS ON BLACK */}
+          <div className="zt-metrics">
+            {[
+              {
+                value: "99.98%",
+                label: "Benchmark Accuracy",
+                bg: "var(--blue-soft)",
+                border: "var(--blue)",
+                color: "var(--blue-ink)",
+              },
+              {
+                value: "1.2M+",
+                label: "Images Tested",
+                bg: "var(--yellow-soft)",
+                border: "var(--yellow)",
+                color: "var(--yellow-ink)",
+              },
+              {
+                value: "<350ms",
+                label: "Average Scan Speed",
+                bg: "var(--mint-soft)",
+                border: "var(--mint)",
+                color: "var(--mint-ink)",
+              },
+              {
+                value: "0 Bytes",
+                label: "Images Stored",
+                bg: "var(--violet-soft)",
+                border: "var(--violet)",
+                color: "var(--violet-ink)",
+              },
+            ].map((m, i) => (
+              <div
+                key={i}
+                className="zt-metric-card"
+                style={{ background: m.bg, borderColor: m.border }}
+              >
+                <div className="zt-metric-val" style={{ color: m.color }}>
+                  {m.value}
+                </div>
+                <div className="zt-metric-lbl">{m.label}</div>
+              </div>
+            ))}
           </div>
         </main>
 
-        {/* 2. WHO IS THIS FOR? (NEW SECTION WITH IMAGES) */}
-        <section
-          id="who-is-this-for"
-          className="w-100 py-5 position-relative bg-black bg-opacity-25"
-        >
-          <div className="container py-5">
-            <div className="text-center mb-5 reveal-element">
-              <h2
-                className="display-5 fw-bolder text-white mb-3"
-                style={{ letterSpacing: "-1px" }}
+        {/* COLORFUL ENGINE PILLS */}
+        <div className="zt-engines-bar">
+          <div className="zt-engines-inner">
+            <span className="zt-kicker" style={{ margin: "0 8px 0 0" }}>
+              Spotting AI from:
+            </span>
+            {engines.map((eng) => (
+              <span
+                key={eng.name}
+                className="zt-pill"
+                style={{
+                  background: eng.bg,
+                  color: eng.color,
+                  fontSize: 12,
+                  padding: "6px 13px",
+                }}
               >
-                Who Can Use This?
-              </h2>
-              <p className="fs-5" style={{ color: "#94a3b8" }}>
-                Our tool is designed for anyone who needs to know the truth.
-              </p>
+                {eng.name}
+              </span>
+            ))}
+          </div>
+        </div>
+
+        {/* FORENSIC SHOWCASE CAROUSEL */}
+        <section id="showcase" className="zt-section">
+          <div className="zt-wrap">
+            <div className="zt-section-head">
+              <div>
+                <span className="zt-kicker">Real Examples</span>
+                <h2>See How It Spots Fakes</h2>
+                <p>
+                  Browse real-world comparisons across portraits, news
+                  photography, and documents.
+                </p>
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  className="zt-btn zt-btn-white zt-btn-sm"
+                  onClick={() =>
+                    setActiveSlide(
+                      (prev) =>
+                        (prev - 1 + showcaseSlides.length) %
+                        showcaseSlides.length,
+                    )
+                  }
+                >
+                  ← Prev
+                </button>
+                <button
+                  className="zt-btn zt-btn-white zt-btn-sm"
+                  onClick={() =>
+                    setActiveSlide((prev) => (prev + 1) % showcaseSlides.length)
+                  }
+                >
+                  Next →
+                </button>
+              </div>
             </div>
 
-            <div className="row g-4 reveal-element delay-1">
-              {/* Card 1 */}
-              <div className="col-12 col-md-4">
-                <div className="bento-item p-0 overflow-hidden h-100 d-flex flex-column">
-                  <img
-                    src="https://images.unsplash.com/photo-1504711434969-e33886168f5c?auto=format&fit=crop&w=600&q=80"
-                    alt="Journalists"
-                    style={{
-                      width: "100%",
-                      height: "200px",
-                      objectFit: "cover",
-                      opacity: 0.8,
-                    }}
-                  />
-                  <div className="p-4 flex-grow-1">
-                    <h4 className="fw-bold text-white mb-2">
-                      Journalists & Media
-                    </h4>
-                    <p className="mb-0" style={{ color: "#94a3b8" }}>
-                      Ensure the news you report is accurate by checking if
-                      breaking news photos are real or fake AI edits.
-                    </p>
-                  </div>
-                </div>
+            <div className="zt-carousel">
+              <div className="zt-carousel-media">
+                <img
+                  src={showcaseSlides[activeSlide].image}
+                  alt={showcaseSlides[activeSlide].title}
+                />
+                <span
+                  className="zt-carousel-tag"
+                  style={{
+                    background: showcaseSlides[activeSlide].isAi
+                      ? "var(--rose)"
+                      : "var(--mint)",
+                    color: showcaseSlides[activeSlide].isAi
+                      ? "#FFFFFF"
+                      : "#000000",
+                  }}
+                >
+                  {showcaseSlides[activeSlide].verdict} •{" "}
+                  {showcaseSlides[activeSlide].confidence}
+                </span>
               </div>
-
-              {/* Card 2 */}
-              <div className="col-12 col-md-4">
-                <div className="bento-item p-0 overflow-hidden h-100 d-flex flex-column">
-                  <img
-                    src="https://images.unsplash.com/photo-1611162617474-5b21e879e113?auto=format&fit=crop&w=600&q=80"
-                    alt="Content Creators"
-                    style={{
-                      width: "100%",
-                      height: "200px",
-                      objectFit: "cover",
-                      opacity: 0.8,
-                    }}
-                  />
-                  <div className="p-4 flex-grow-1">
-                    <h4 className="fw-bold text-white mb-2">
-                      Content Creators
-                    </h4>
-                    <p className="mb-0" style={{ color: "#94a3b8" }}>
-                      Check images before sharing them on social media so you
-                      never accidentally spread fake content.
-                    </p>
-                  </div>
+              <div className="zt-carousel-body">
+                <span
+                  className="zt-pill"
+                  style={{
+                    alignSelf: "flex-start",
+                    background: showcaseSlides[activeSlide].pillBg,
+                    color: showcaseSlides[activeSlide].pillColor,
+                  }}
+                >
+                  {showcaseSlides[activeSlide].engine}
+                </span>
+                <h3>{showcaseSlides[activeSlide].title}</h3>
+                <p>{showcaseSlides[activeSlide].desc}</p>
+                <div className="zt-telemetry-note">
+                  {showcaseSlides[activeSlide].exif}
                 </div>
-              </div>
-
-              {/* Card 3 */}
-              <div className="col-12 col-md-4">
-                <div className="bento-item p-0 overflow-hidden h-100 d-flex flex-column">
-                  <img
-                    src="https://images.unsplash.com/photo-1552664730-d307ca884978?auto=format&fit=crop&w=600&q=80"
-                    alt="Enterprises"
-                    style={{
-                      width: "100%",
-                      height: "200px",
-                      objectFit: "cover",
-                      opacity: 0.8,
-                    }}
-                  />
-                  <div className="p-4 flex-grow-1">
-                    <h4 className="fw-bold text-white mb-2">
-                      Businesses & Security
-                    </h4>
-                    <p className="mb-0" style={{ color: "#94a3b8" }}>
-                      Verify ID cards, insurance claims, and important documents
-                      to protect your business from fraud.
-                    </p>
-                  </div>
+                <div className="zt-dots">
+                  {showcaseSlides.map((_, idx) => (
+                    <button
+                      key={idx}
+                      className="zt-dot"
+                      onClick={() => setActiveSlide(idx)}
+                      style={{
+                        width: activeSlide === idx ? 30 : 10,
+                        background:
+                          activeSlide === idx
+                            ? "var(--yellow)"
+                            : "var(--border-strong)",
+                      }}
+                      aria-label={`Slide ${idx + 1}`}
+                    />
+                  ))}
                 </div>
               </div>
             </div>
           </div>
         </section>
 
-        {/* 3. CYBER CRIME AWARENESS POSTER */}
-        <section className="w-100 py-5">
-          <div className="container py-4">
-            <div
-              className="bento-item text-center p-5 reveal-element"
-              style={{
-                background:
-                  "linear-gradient(135deg, rgba(239, 68, 68, 0.2) 0%, rgba(153, 27, 27, 0.1) 100%)",
-                border: "1px solid rgba(239, 68, 68, 0.4)",
-                boxShadow: "0 20px 40px rgba(239, 68, 68, 0.15)",
-              }}
-            >
-              <div className="mb-4 text-danger d-flex justify-content-center">
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  width="64"
-                  height="64"
-                  fill="currentColor"
-                  viewBox="0 0 16 16"
-                >
-                  <path d="M8.982 1.566a1.13 1.13 0 0 0-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767L8.982 1.566zM8 5c.535 0 .954.462.9.995l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 5.995A.905.905 0 0 1 8 5zm.002 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2z" />
-                </svg>
-              </div>
-              <h2 className="display-6 fw-bolder text-white mb-3">
-                Cyber Crime Awareness
-              </h2>
-              <p
-                className="fs-4 mb-5 text-white opacity-75"
-                style={{ maxWidth: "800px", margin: "0 auto" }}
-              >
-                Scammed by deep fake images or getting blackmailed? Report it
-                immediately to the authorities.
+        {/* USE CASES */}
+        <section id="use-cases" className="zt-section zt-section-white">
+          <div className="zt-wrap">
+            <div className="zt-section-head center">
+              <span className="zt-kicker">Who It&apos;s For</span>
+              <h2>Built for People Who Need the Truth</h2>
+              <p>
+                Simple enough for everyday checks, accurate enough for security
+                teams.
               </p>
+            </div>
+
+            <div className="zt-grid-3">
+              {[
+                {
+                  title: "Journalists & Media",
+                  accent: "var(--blue)",
+                  img: "https://images.unsplash.com/photo-1504711434969-e33886168f5c?auto=format&fit=crop&w=700&q=80",
+                  desc: "Verify breaking photos before publishing so synthetic fakes never slip into print.",
+                },
+                {
+                  title: "Fintech, KYC & Insurance",
+                  accent: "var(--coral)",
+                  img: "https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=700&q=80",
+                  desc: "Catch doctored IDs, fake damage claims, and synthetic onboarding selfies fast.",
+                },
+                {
+                  title: "Creators & Social Teams",
+                  accent: "var(--violet)",
+                  img: "https://images.unsplash.com/photo-1611162617474-5b21e879e113?auto=format&fit=crop&w=700&q=80",
+                  desc: "Check viral visuals before reposting to protect your audience and brand trust.",
+                },
+              ].map((card, i) => (
+                <div key={i} className="zt-card">
+                  <div
+                    className="zt-card-accent"
+                    style={{ background: card.accent }}
+                  />
+                  <img
+                    className="zt-card-img"
+                    src={card.img}
+                    alt={card.title}
+                  />
+                  <div className="zt-card-body">
+                    <h3>{card.title}</h3>
+                    <p>{card.desc}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* CYBER CRIME AWARENESS */}
+        <section className="zt-section" style={{ padding: "40px 0" }}>
+          <div className="zt-wrap">
+            <div className="zt-cyber-box">
+              <div>
+                <span
+                  className="zt-kicker"
+                  style={{ color: "var(--rose-ink)", marginBottom: 6 }}
+                >
+                  Cyber Crime Awareness
+                </span>
+                <h3
+                  style={{ margin: "0 0 6px", fontSize: 20, fontWeight: 800 }}
+                >
+                  Targeted by deepfake scams or blackmail?
+                </h3>
+                <p
+                  style={{ margin: 0, fontSize: 14, color: "var(--rose-ink)" }}
+                >
+                  Report fraudulent deepfakes immediately to Indian authorities
+                  via Sanchar Saathi.
+                </p>
+              </div>
               <button
                 onClick={() => setShowCyberModal(true)}
-                className="btn btn-danger btn-lg rounded-pill px-5 py-3 fw-bold text-uppercase fs-5"
-                style={{
-                  letterSpacing: "1px",
-                  boxShadow: "0 0 20px rgba(239, 68, 68, 0.4)",
-                }}
+                className="zt-btn zt-btn-rose"
               >
                 Report to Sanchar Saathi
               </button>
@@ -1154,218 +3174,353 @@ export default function Home() {
           </div>
         </section>
 
-        {/* 4. PRICING PLANS */}
-        <section id="pricing" className="w-100 py-5">
-          <div className="container py-5">
-            <div className="text-center mb-5 reveal-element">
-              <h2
-                className="display-5 fw-bolder text-white mb-3"
-                style={{ letterSpacing: "-1px" }}
-              >
-                Simple Pricing Plans
-              </h2>
-              <p className="fs-5" style={{ color: "#94a3b8" }}>
-                Choose the plan that fits you best.
+        {/* PRICING */}
+        <section id="pricing" className="zt-section zt-section-white">
+          <div className="zt-wrap">
+            <div className="zt-section-head center">
+              <span className="zt-kicker">Pricing</span>
+              <h2>Simple, Honest Plans</h2>
+              <p>
+                No account required. Pay with 1-Tap UPI or international cards
+                and unlock instantly.
               </p>
-            </div>
 
-            <div className="row g-4 justify-content-center align-items-stretch reveal-element delay-2">
-              {/* Free Plan */}
-              <div className="col-12 col-lg-4">
-                <div className="bento-item h-100 d-flex flex-column p-5">
-                  <div className="mb-4">
-                    <h3 className="fw-bold text-white mb-2">Starter</h3>
-                    <h1 className="display-4 fw-bolder text-white mb-3">
-                      Free
-                    </h1>
-                    <p className="fs-6" style={{ color: "#94a3b8" }}>
-                      Great for personal, everyday use.
-                    </p>
-                  </div>
-
-                  <a
-                    href="https://zen-tech.vercel.app/Contact"
-                    className="btn btn-outline-light w-100 py-3 mb-5 fw-bold rounded-pill text-uppercase fs-6"
-                    style={{ letterSpacing: "1px" }}
+              <div className="zt-controls-row">
+                <div className="zt-segmented">
+                  <button
+                    className={`zt-seg-btn ${billingCycle === "monthly" ? "active" : ""}`}
+                    onClick={() => setBillingCycle("monthly")}
                   >
-                    Get Started
-                  </a>
+                    Monthly
+                  </button>
+                  <button
+                    className={`zt-seg-btn ${billingCycle === "yearly" ? "active" : ""}`}
+                    onClick={() => setBillingCycle("yearly")}
+                  >
+                    Yearly <span className="zt-save-pill">30% OFF</span>
+                  </button>
+                </div>
 
-                  <ul className="list-unstyled mb-0 d-flex flex-column gap-4 mt-auto">
-                    {[
-                      "Check if an image is real or AI",
-                      "Access to our best scanner",
-                      "We don't save your images",
-                      "Works with JPG, PNG, and WEBP",
-                      "Standard checking speed",
-                      "Check up to 10 images per day",
-                      "Community Help & Support",
-                    ].map((item, i) => (
-                      <li key={i} className="d-flex align-items-start gap-3">
-                        <span className="text-neon fs-5">✔</span>
-                        <span className="fw-medium text-white opacity-75 fs-6">
-                          {item}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
+                <div className="zt-segmented">
+                  <button
+                    className={`zt-seg-btn ${currency === "INR" ? "active" : ""}`}
+                    onClick={() => setCurrency("INR")}
+                  >
+                    ₹ INR (UPI)
+                  </button>
+                  <button
+                    className={`zt-seg-btn ${currency === "USD" ? "active" : ""}`}
+                    onClick={() => setCurrency("USD")}
+                  >
+                    $ USD
+                  </button>
                 </div>
               </div>
+            </div>
 
-              {/* Pro Plan */}
-              <div className="col-12 col-lg-4">
-                <div
-                  className="bento-item h-100 d-flex flex-column p-5 position-relative"
+            <div className="zt-grid-3">
+              {/* Starter */}
+              <div className="zt-price-card">
+                <span
+                  className="zt-pill"
                   style={{
-                    border: "2px solid var(--neon-blue)",
-                    boxShadow: "0 0 40px rgba(0, 242, 254, 0.15)",
+                    alignSelf: "flex-start",
+                    background: "var(--surface-2)",
+                    color: "var(--muted)",
+                    marginBottom: 14,
                   }}
                 >
-                  <div
-                    className="position-absolute top-0 start-50 translate-middle badge rounded-pill px-4 py-2 text-dark fw-bold fs-6"
-                    style={{
-                      background: "var(--neon-blue)",
-                      letterSpacing: "2px",
-                    }}
-                  >
-                    RECOMMENDED
-                  </div>
-                  <div className="mb-4 mt-2">
-                    <h3 className="fw-bold text-white mb-2">Professional</h3>
-                    <div className="d-flex align-items-baseline mb-3">
-                      <h1 className="display-4 fw-bolder text-neon mb-0">
-                        ₹99
-                      </h1>
-                      <span className="ms-2 fs-5" style={{ color: "#94a3b8" }}>
-                        /mo
-                      </span>
-                    </div>
-                    <p className="fs-6" style={{ color: "#94a3b8" }}>
-                      For people who check a lot of images.
-                    </p>
-                  </div>
-
-                  <a
-                    href="https://zen-tech.vercel.app/Contact"
-                    className="btn btn-premium w-100 py-3 mb-5 fw-bolder rounded-pill text-uppercase fs-6"
-                    style={{ letterSpacing: "1px" }}
-                  >
-                    Purchase License
-                  </a>
-
-                  <ul className="list-unstyled mb-0 d-flex flex-column gap-4 mt-auto">
-                    {[
-                      "Everything in the Starter plan",
-                      "See exactly which AI made the image",
-                      "Read hidden image data (EXIF)",
-                      "Check very large images",
-                      "Super fast checking speed",
-                      "Check as many images as you want",
-                      "Priority email support",
-                    ].map((item, i) => (
-                      <li key={i} className="d-flex align-items-start gap-3">
-                        <span className="text-neon fs-5">✔</span>
-                        <span className="fw-medium text-white fs-6">
-                          {item}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
+                  PERSONAL
+                </span>
+                <h3
+                  style={{ margin: "0 0 8px", fontSize: 20, fontWeight: 800 }}
+                >
+                  Starter
+                </h3>
+                <div className="zt-price-amount">Free</div>
+                <p
+                  style={{
+                    margin: "10px 0 22px",
+                    fontSize: 13,
+                    color: "var(--muted)",
+                  }}
+                >
+                  Great for quick everyday checks.
+                </p>
+                <button
+                  onClick={() =>
+                    window.scrollTo({ top: 0, behavior: "smooth" })
+                  }
+                  className="zt-btn zt-btn-white zt-btn-full"
+                >
+                  {currentPlan === "free" ? "Current Plan" : "Open Scanner"}
+                </button>
+                <ul className="zt-feature-list">
+                  {[
+                    "Real vs. AI probability score",
+                    "Zero image retention privacy",
+                    "JPG, PNG, WEBP up to 5MB",
+                    "Standard checking speed",
+                    "Up to 10 images per day",
+                  ].map((item, i) => (
+                    <li key={i}>
+                      <span className="zt-check">✓</span>
+                      <span>{item}</span>
+                    </li>
+                  ))}
+                </ul>
               </div>
 
-              {/* Enterprise Plan */}
-              <div className="col-12 col-lg-4">
-                <div className="bento-item h-100 d-flex flex-column p-5">
-                  <div className="mb-4">
-                    <h3 className="fw-bold text-white mb-2">Enterprise</h3>
-                    <div className="d-flex align-items-baseline mb-3">
-                      <h1 className="display-4 fw-bolder text-white mb-0">
-                        ₹999
-                      </h1>
-                      <span className="ms-2 fs-5" style={{ color: "#94a3b8" }}>
-                        /mo
-                      </span>
-                    </div>
-                    <p className="fs-6" style={{ color: "#94a3b8" }}>
-                      For big companies and developers.
-                    </p>
-                  </div>
-
-                  <a
-                    href="https://zen-tech.vercel.app/Contact"
-                    className="btn btn-outline-light w-100 py-3 mb-5 fw-bold rounded-pill text-uppercase fs-6"
-                    style={{ letterSpacing: "1px" }}
-                  >
-                    Purchase License
-                  </a>
-
-                  <ul className="list-unstyled mb-0 d-flex flex-column gap-4 mt-auto">
-                    {[
-                      "Everything in the Pro plan",
-                      "Find where this image is used online",
-                      "Check social media for this image",
-                      "Check multiple images at once",
-                      "Your own dedicated helper",
-                      "Connect this tool to your website",
-                      "Create custom reports (PDF/CSV)",
-                    ].map((item, i) => (
-                      <li key={i} className="d-flex align-items-start gap-3">
-                        <span className="text-neon fs-5">✔</span>
-                        <span className="fw-medium text-white opacity-75 fs-6">
-                          {item}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
+              {/* Pro */}
+              <div className="zt-price-card featured">
+                <span className="zt-price-badge">MOST POPULAR</span>
+                <span
+                  className="zt-pill"
+                  style={{
+                    alignSelf: "flex-start",
+                    background: "var(--blue-soft)",
+                    color: "var(--blue-ink)",
+                    marginBottom: 14,
+                  }}
+                >
+                  CREATORS & PROS
+                </span>
+                <h3
+                  style={{ margin: "0 0 8px", fontSize: 20, fontWeight: 800 }}
+                >
+                  Professional
+                </h3>
+                <div
+                  style={{ display: "flex", alignItems: "baseline", gap: 6 }}
+                >
+                  <span className="zt-price-amount">
+                    {symbol}
+                    {billingCycle === "yearly"
+                      ? PRICE_DISPLAY.pro[currency].yearlyPerMonth
+                      : PRICE_DISPLAY.pro[currency].monthly}
+                  </span>
+                  <span style={{ fontSize: 14, color: "var(--muted)" }}>
+                    /mo
+                  </span>
                 </div>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* 5. TESTIMONIALS */}
-        <section className="w-100 py-5">
-          <div className="container py-4">
-            <div className="text-center mb-5 reveal-element">
-              <h2 className="display-5 fw-bolder text-white">
-                Trusted by Thousands
-              </h2>
-              <p className="fs-5" style={{ color: "#94a3b8" }}>
-                See what people are saying about our tool.
-              </p>
-            </div>
-            <div className="row g-4 reveal-element delay-1">
-              {testimonials.map((testimonial, idx) => (
-                <div key={idx} className="col-12 col-md-6 col-lg-4">
-                  <div className="bento-item h-100 p-4">
-                    <div className="d-flex align-items-center mb-4">
-                      <div
-                        className="rounded-circle d-flex align-items-center justify-content-center text-dark fw-bolder me-3 fs-5"
+                <p
+                  style={{
+                    margin: "10px 0 22px",
+                    fontSize: 13,
+                    color: "var(--muted)",
+                  }}
+                >
+                  {billingCycle === "yearly" ? (
+                    <>
+                      Billed{" "}
+                      <strong style={{ color: "#FFFFFF" }}>
+                        {symbol}
+                        {PRICE_DISPLAY.pro[currency].yearly}/yr
+                      </strong>{" "}
+                      <span
                         style={{
-                          width: "50px",
-                          height: "50px",
-                          background:
-                            "linear-gradient(135deg, #00f2fe 0%, #4facfe 100%)",
+                          textDecoration: "line-through",
+                          marginLeft: 4,
                         }}
                       >
-                        {testimonial.name.charAt(0)}
+                        {symbol}
+                        {PRICE_DISPLAY.pro[currency].originalYearly}
+                      </span>
+                    </>
+                  ) : (
+                    "Billed monthly • Switch to Yearly for 30% OFF"
+                  )}
+                </p>
+                <button
+                  onClick={() => setPendingCheckoutPlan("pro")}
+                  disabled={
+                    currentPlan === "pro" || currentPlan === "enterprise"
+                  }
+                  className="zt-btn zt-btn-blue zt-btn-full"
+                >
+                  {currentPlan === "pro"
+                    ? "Active Plan"
+                    : currency === "INR"
+                      ? "1-Tap UPI / Purchase"
+                      : "Purchase License"}
+                </button>
+                <ul className="zt-feature-list">
+                  {[
+                    "Everything in Starter",
+                    "Identify likely AI generator engine",
+                    "Read hidden image metadata (EXIF)",
+                    "Large image support (up to 25MB)",
+                    "Priority fast checking speed",
+                    "Unlimited daily scans",
+                    "Priority email support",
+                  ].map((item, i) => (
+                    <li
+                      key={i}
+                      style={{ color: "var(--ink)", fontWeight: 500 }}
+                    >
+                      <span className="zt-check">✓</span>
+                      <span>{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              {/* Enterprise */}
+              <div
+                className="zt-price-card"
+                style={{ background: "#0E0A18", borderColor: "#2E1F4D" }}
+              >
+                <span
+                  className="zt-pill"
+                  style={{
+                    alignSelf: "flex-start",
+                    background: "var(--violet-soft)",
+                    color: "var(--violet-ink)",
+                    marginBottom: 14,
+                  }}
+                >
+                  TEAMS & AGENCIES
+                </span>
+                <h3
+                  style={{ margin: "0 0 8px", fontSize: 20, fontWeight: 800 }}
+                >
+                  Enterprise
+                </h3>
+                <div
+                  style={{ display: "flex", alignItems: "baseline", gap: 6 }}
+                >
+                  <span className="zt-price-amount">
+                    {symbol}
+                    {billingCycle === "yearly"
+                      ? PRICE_DISPLAY.enterprise[currency].yearlyPerMonth
+                      : PRICE_DISPLAY.enterprise[currency].monthly}
+                  </span>
+                  <span style={{ fontSize: 14, color: "var(--muted)" }}>
+                    /mo
+                  </span>
+                </div>
+                <p
+                  style={{
+                    margin: "10px 0 22px",
+                    fontSize: 13,
+                    color: "var(--muted)",
+                  }}
+                >
+                  {billingCycle === "yearly" ? (
+                    <>
+                      Billed{" "}
+                      <strong style={{ color: "#FFFFFF" }}>
+                        {symbol}
+                        {PRICE_DISPLAY.enterprise[currency].yearly}/yr
+                      </strong>{" "}
+                      <span
+                        style={{
+                          textDecoration: "line-through",
+                          marginLeft: 4,
+                        }}
+                      >
+                        {symbol}
+                        {PRICE_DISPLAY.enterprise[currency].originalYearly}
+                      </span>
+                    </>
+                  ) : (
+                    "Billed monthly • Switch to Yearly for 30% OFF"
+                  )}
+                </p>
+                <button
+                  onClick={() => setPendingCheckoutPlan("enterprise")}
+                  disabled={currentPlan === "enterprise"}
+                  className="zt-btn zt-btn-yellow zt-btn-full"
+                >
+                  {currentPlan === "enterprise"
+                    ? "Active Plan"
+                    : currency === "INR"
+                      ? "1-Tap UPI / Purchase"
+                      : "Purchase License"}
+                </button>
+                <ul className="zt-feature-list">
+                  {[
+                    "Everything in Professional",
+                    "Multi-image batch scanning queue",
+                    "Ultra-large files up to 50MB",
+                    "Downloadable CSV forensic reports",
+                    "Dedicated support & API integration",
+                  ].map((item, i) => (
+                    <li key={i}>
+                      <span className="zt-check">✓</span>
+                      <span>{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* TESTIMONIALS */}
+        <section className="zt-section">
+          <div className="zt-wrap">
+            <div className="zt-section-head center">
+              <span className="zt-kicker">Reviews</span>
+              <h2>Loved by Verification Teams</h2>
+            </div>
+
+            <div className="zt-grid-3">
+              {testimonials.map((t, idx) => (
+                <div key={idx} className="zt-card">
+                  <div className="zt-card-body">
+                    <p
+                      style={{
+                        marginBottom: 20,
+                        color: "var(--ink)",
+                        fontSize: 14,
+                        lineHeight: 1.65,
+                      }}
+                    >
+                      &ldquo;{t.text}&rdquo;
+                    </p>
+                    <div
+                      style={{
+                        marginTop: "auto",
+                        paddingTop: 14,
+                        borderTop: "1px solid var(--border)",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 12,
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: 38,
+                          height: 38,
+                          borderRadius: 10,
+                          background: t.color,
+                          color: "#FFFFFF",
+                          fontWeight: 800,
+                          fontSize: 15,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          flexShrink: 0,
+                        }}
+                      >
+                        {t.name.charAt(0)}
                       </div>
                       <div>
-                        <h5 className="mb-0 fw-bold text-white">
-                          {testimonial.name}
-                        </h5>
-                        <span className="text-neon fw-bold">
-                          {testimonial.role}
-                        </span>
+                        <div
+                          style={{
+                            fontSize: 14,
+                            fontWeight: 700,
+                            color: "var(--ink)",
+                          }}
+                        >
+                          {t.name}
+                        </div>
+                        <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                          {t.role}, {t.company}
+                        </div>
                       </div>
                     </div>
-                    <p
-                      className="card-text mb-0 fs-6"
-                      style={{ fontStyle: "italic", color: "#cbd5e1" }}
-                    >
-                      "{testimonial.text}"
-                    </p>
                   </div>
                 </div>
               ))}
@@ -1373,101 +3528,65 @@ export default function Home() {
           </div>
         </section>
 
-        {/* 6. FAQ SECTION */}
-        <section className="w-100 py-5">
-          <div
-            className="container py-5 reveal-element"
-            style={{ maxWidth: "800px" }}
-          >
-            <div className="text-center mb-5">
-              <h2 className="display-5 fw-bolder text-white">
-                Frequently Asked Questions
-              </h2>
-              <p className="fs-5" style={{ color: "#94a3b8" }}>
-                Everything you need to know about our tool.
-              </p>
+        {/* FAQ */}
+        <section id="faq" className="zt-section zt-section-white">
+          <div className="zt-wrap">
+            <div className="zt-section-head center">
+              <span className="zt-kicker">FAQ</span>
+              <h2>Frequently Asked Questions</h2>
             </div>
-            <div className="accordion border-0">
-              {faqs.map((faq, index) => (
-                <div
-                  className="bento-item p-0 mb-3"
-                  key={index}
-                  style={{ padding: "0 !important" }}
-                >
-                  <div
-                    className="p-4 d-flex justify-content-between align-items-center"
-                    onClick={() => setOpenFaq(openFaq === index ? null : index)}
-                    style={{ cursor: "pointer" }}
+
+            <div className="zt-faq-list">
+              {faqs.map((faq, idx) => (
+                <div key={idx} className="zt-faq-item">
+                  <button
+                    className="zt-faq-q"
+                    onClick={() => setOpenFaq(openFaq === idx ? null : idx)}
                   >
-                    <h5 className="mb-0 fw-bold text-white">{faq.q}</h5>
-                    <span className="fs-4 text-neon">
-                      {openFaq === index ? "−" : "+"}
+                    <span>{faq.q}</span>
+                    <span className="zt-faq-plus">
+                      {openFaq === idx ? "−" : "+"}
                     </span>
-                  </div>
-                  {openFaq === index && (
-                    <div
-                      className="fs-6 px-4 pb-4"
-                      style={{ color: "#94a3b8" }}
-                    >
-                      {faq.a}
-                    </div>
-                  )}
+                  </button>
+                  {openFaq === idx && <div className="zt-faq-a">{faq.a}</div>}
                 </div>
               ))}
             </div>
           </div>
         </section>
 
-        {/* 7. BOTTOM CTA */}
-        <section className="w-100 py-5 my-5 reveal-element">
-          <div className="container py-5 text-center">
-            <h1
-              className="display-4 fw-bolder mb-4 text-white"
-              style={{ letterSpacing: "-1px" }}
-            >
-              Ready to find out the truth?
-            </h1>
-            <p
-              className="lead mb-5 mx-auto fs-4"
-              style={{ color: "#94a3b8", maxWidth: "600px" }}
-            >
-              Join thousands of people who use our tool every day to spot fake
-              images easily.
-            </p>
-            <button
-              className="btn btn-premium btn-lg rounded-pill px-5 py-4 fw-bolder text-uppercase fs-5"
-              style={{ letterSpacing: "2px" }}
-              onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
-            >
-              Start Scanning Now
-            </button>
-          </div>
-        </section>
-
-        {/* 8. MINIMAL FOOTER */}
-        <footer
-          className="w-100 py-4 border-top"
-          style={{
-            borderColor: "rgba(255,255,255,0.05) !important",
-            background: "rgba(0,0,0,0.5)",
-          }}
-        >
-          <div className="container d-flex flex-column flex-md-row justify-content-between align-items-center">
-            <div className="d-flex align-items-center gap-2 mb-3 mb-md-0">
-              <span className="fw-bolder fs-4 text-white tracking-tight">
-                Zen-Tech
-              </span>
-              <p
-                className="mb-0 fw-medium fs-6 ms-3 ps-3 border-start border-secondary border-opacity-25"
-                style={{ color: "#64748b" }}
-              >
-                © {currentYear || "2026"} All rights reserved
-              </p>
+        {/* FOOTER */}
+        <footer className="zt-footer">
+          <div className="zt-footer-inner">
+            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+              <strong style={{ color: "var(--ink)", fontSize: 15 }}>
+                Znxios International
+              </strong>
+              <span>© {currentYear || "2026"} All rights reserved</span>
             </div>
-            <div className="d-flex gap-4">
+            <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
+              <button
+                onClick={() => setShowRestoreModal(true)}
+                style={{
+                  background: "none",
+                  border: "none",
+                  padding: 0,
+                  fontSize: 13,
+                  fontWeight: 600,
+                  color: "var(--muted)",
+                  cursor: "pointer",
+                }}
+              >
+                Access Key
+              </button>
               <Link
                 href="/pp"
-                className="text-decoration-none fs-6 fw-semibold text-neon hover-white transition-all"
+                style={{
+                  fontSize: 13,
+                  fontWeight: 700,
+                  color: "var(--blue-ink)",
+                  textDecoration: "none",
+                }}
               >
                 Privacy Policy
               </Link>

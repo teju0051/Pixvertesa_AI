@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 
 export default function PrivacyPolicy() {
-  const [currentYear, setCurrentYear] = useState("");
+  const [currentYear, setCurrentYear] = useState<string>("2026");
 
   useEffect(() => {
     setCurrentYear(new Date().getFullYear().toString());
@@ -16,372 +16,642 @@ export default function PrivacyPolicy() {
         dangerouslySetInnerHTML={{
           __html: `
         :root {
-          --enterprise-primary: #0f172a;
-          --enterprise-secondary: #475569;
-          --enterprise-accent: #2563eb;
-          --bg-light: #f8fafc;
-          --card-bg: #ffffff;
-          --border-color: #e2e8f0;
+          --paper: #000000;
+          --white: #0B0B0D;
+          --surface-2: #141418;
+          --ink: #FFFFFF;
+          --muted: #A1A1AA;
+          --subtle: #71717A;
+          --border: #242429;
+          --border-strong: #3F3F46;
+
+          --blue: #2563EB;
+          --blue-dark: #1D4ED8;
+          --blue-soft: #101E38;
+          --blue-ink: #93C5FD;
+
+          --yellow: #FACC15;
+          --yellow-soft: #262008;
+          --yellow-ink: #FDE047;
+
+          --mint: #10B981;
+          --mint-soft: #07241B;
+          --mint-ink: #6EE7B7;
+
+          --violet: #7C3AED;
+          --violet-soft: #1C1233;
+          --violet-ink: #C4B5FD;
+
+          --rose: #E11D48;
+          --rose-soft: #2B0D16;
+          --rose-ink: #FDA4AF;
+
+          --font-sans: "Plus Jakarta Sans", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+          --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
         }
 
-        body, html {
-          background-color: var(--bg-light);
-          color: var(--enterprise-primary);
-          overflow-x: hidden;
-          font-family: 'Inter', system-ui, -apple-system, sans-serif;
+        * { box-sizing: border-box; }
+        html, body {
+          margin: 0;
+          padding: 0;
+          background: var(--paper);
+          color: var(--ink);
+          font-family: var(--font-sans);
+          -webkit-font-smoothing: antialiased;
+          scroll-behavior: smooth;
         }
 
-        .enterprise-bg {
-          background-color: var(--bg-light);
-          background-image: radial-gradient(#e2e8f0 1px, transparent 1px);
-          background-size: 32px 32px;
+        .zt-page {
+          min-height: 100vh;
+          display: flex;
+          flex-direction: column;
+          background: var(--paper);
         }
 
-        .policy-card {
-          background: var(--card-bg);
-          border: 1px solid var(--border-color);
-          border-radius: 0.75rem;
-          box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
-          padding: 3rem;
+        .zt-wrap {
+          width: 100%;
+          max-width: 960px;
+          margin: 0 auto;
+          padding: 0 24px;
         }
 
-        .policy-section {
-          margin-bottom: 2.5rem;
-          padding-bottom: 2.5rem;
-          border-bottom: 1px solid var(--border-color);
+        /* HEADER */
+        .zt-header {
+          position: sticky;
+          top: 0;
+          z-index: 100;
+          background: #000000;
+          border-bottom: 1.5px solid var(--border);
         }
-
-        .policy-section:last-child {
-          margin-bottom: 0;
-          padding-bottom: 0;
-          border-bottom: none;
+        .zt-header-inner {
+          max-width: 1140px;
+          margin: 0 auto;
+          padding: 14px 24px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 16px;
         }
-
-        .section-title {
-          color: var(--enterprise-primary);
-          font-weight: 600;
-          letter-spacing: -0.025em;
-          margin-bottom: 1.25rem;
-          font-size: 1.25rem;
-        }
-
-        .section-text {
-          color: var(--enterprise-secondary);
-          line-height: 1.75;
-          font-size: 1rem;
-        }
-        
-        .section-list {
-          margin-top: 1rem;
-          padding-left: 1.5rem;
-        }
-
-        .section-list li {
-          margin-bottom: 0.75rem;
-        }
-
-        .enterprise-link {
-          color: var(--enterprise-accent);
+        .zt-brand {
+          display: flex;
+          align-items: center;
+          gap: 12px;
           text-decoration: none;
-          font-weight: 500;
-          transition: color 0.2s ease;
+        }
+        .zt-btn {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+          font-family: var(--font-sans);
+          font-size: 13px;
+          font-weight: 700;
+          padding: 9px 16px;
+          border-radius: 10px;
+          border: 1.5px solid var(--border-strong);
+          background: var(--surface-2);
+          color: var(--ink);
+          text-decoration: none;
+          cursor: pointer;
+          transition: transform 0.12s ease, background 0.15s ease, border-color 0.15s ease;
+        }
+        .zt-btn:hover {
+          background: #1E1E24;
+          border-color: var(--ink);
+          transform: translateY(-1px);
         }
 
-        .enterprise-link:hover {
-          color: #1d4ed8;
+        /* HERO */
+        .zt-pp-hero {
+          padding: 56px 0 36px;
+        }
+        .zt-pill {
+          font-family: var(--font-mono);
+          font-size: 11px;
+          font-weight: 700;
+          padding: 5px 12px;
+          border-radius: 999px;
+          display: inline-block;
+          margin-bottom: 16px;
+        }
+        .zt-pp-hero h1 {
+          margin: 0 0 14px;
+          font-size: clamp(32px, 5vw, 48px);
+          font-weight: 800;
+          letter-spacing: -0.03em;
+          line-height: 1.1;
+          color: var(--ink);
+        }
+        .zt-highlight {
+          background: var(--yellow);
+          color: #000000;
+          padding: 0 10px;
+          border-radius: 10px;
+          display: inline-block;
+        }
+        .zt-pp-hero p {
+          margin: 0;
+          max-width: 640px;
+          font-size: 16px;
+          line-height: 1.65;
+          color: var(--muted);
+        }
+
+        /* SUMMARY HIGHLIGHTS */
+        .zt-highlights {
+          display: grid;
+          grid-template-columns: repeat(4, 1fr);
+          gap: 14px;
+          margin-bottom: 40px;
+        }
+        .zt-hl-card {
+          border-radius: 16px;
+          padding: 18px 16px;
+          border: 1.5px solid;
+        }
+        .zt-hl-title {
+          font-size: 14px;
+          font-weight: 800;
+          margin: 0 0 6px;
+        }
+        .zt-hl-desc {
+          font-size: 12px;
+          line-height: 1.5;
+          color: var(--muted);
+          margin: 0;
+        }
+
+        /* POLICY BODY */
+        .zt-policy-stack {
+          display: flex;
+          flex-direction: column;
+          gap: 20px;
+          padding-bottom: 72px;
+        }
+        .zt-policy-card {
+          background: var(--white);
+          border: 1.5px solid var(--border);
+          border-radius: 18px;
+          padding: 28px 30px;
+        }
+        .zt-policy-head {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          margin-bottom: 14px;
+        }
+        .zt-sec-num {
+          font-family: var(--font-mono);
+          font-size: 12px;
+          font-weight: 800;
+          padding: 4px 10px;
+          border-radius: 8px;
+          flex-shrink: 0;
+        }
+        .zt-policy-card h2 {
+          margin: 0;
+          font-size: 19px;
+          font-weight: 800;
+          letter-spacing: -0.015em;
+          color: var(--ink);
+        }
+        .zt-policy-card p {
+          margin: 0 0 12px;
+          font-size: 14px;
+          line-height: 1.7;
+          color: var(--muted);
+        }
+        .zt-policy-card p:last-child {
+          margin-bottom: 0;
+        }
+        .zt-policy-list {
+          margin: 10px 0 0;
+          padding-left: 18px;
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+        .zt-policy-list li {
+          font-size: 14px;
+          line-height: 1.65;
+          color: var(--muted);
+        }
+        .zt-policy-list strong {
+          color: var(--ink);
+        }
+
+        .zt-contact-box {
+          margin-top: 14px;
+          background: var(--surface-2);
+          border: 1.5px solid var(--border-strong);
+          border-radius: 12px;
+          padding: 18px 20px;
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 16px;
+        }
+        .zt-contact-label {
+          font-family: var(--font-mono);
+          font-size: 11px;
+          text-transform: uppercase;
+          letter-spacing: 0.06em;
+          color: var(--subtle);
+          margin-bottom: 4px;
+        }
+        .zt-contact-val {
+          font-size: 14px;
+          font-weight: 700;
+          color: var(--ink);
+          word-break: break-word;
+        }
+        .zt-contact-val a {
+          color: var(--blue-ink);
+          text-decoration: none;
+        }
+        .zt-contact-val a:hover {
           text-decoration: underline;
         }
-          
-        .last-updated {
-          font-size: 0.875rem;
-          color: var(--enterprise-secondary);
-          text-transform: uppercase;
-          letter-spacing: 0.05em;
-          font-weight: 600;
+
+        /* FOOTER */
+        .zt-footer {
+          border-top: 1.5px solid var(--border);
+          background: #000000;
+          padding: 28px 0;
+          margin-top: auto;
+        }
+        .zt-footer-inner {
+          max-width: 1140px;
+          margin: 0 auto;
+          padding: 0 24px;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          flex-wrap: wrap;
+          gap: 16px;
+          font-size: 13px;
+          color: var(--muted);
+        }
+
+        @media (max-width: 820px) {
+          .zt-highlights { grid-template-columns: repeat(2, 1fr); }
+          .zt-contact-box { grid-template-columns: 1fr; }
+          .zt-policy-card { padding: 22px 20px; }
         }
       `,
         }}
       />
 
-      <div className="min-vh-100 d-flex flex-column enterprise-bg font-sans">
-        {/* ENTERPRISE NAV BAR */}
-        <header
-          className="w-100 bg-white py-3 px-4 px-md-5 d-flex justify-content-between align-items-center sticky-top"
-          style={{
-            zIndex: 1000,
-            borderBottom: "1px solid var(--border-color)",
-          }}
-        >
-          <div className="d-flex align-items-center">
-            <Link href="/">
+      <div className="zt-page">
+        {/* HEADER */}
+        <header className="zt-header">
+          <div className="zt-header-inner">
+            <Link href="/" className="zt-brand">
               <img
-                src="https://zen-tech.vercel.app/Assets/zt-portrait-logo.png"
-                alt="Zen-Tech Logo"
+                src="/pixvertesa.png"
                 style={{
-                  height: "48px",
+                  display: "block",
+                  height: "58px",
                   width: "auto",
-                  objectFit: "contain",
-                  filter: "invert(1) contrast(100)",
+                  border: 0,
                 }}
+                alt="Znxios International"
               />
             </Link>
-          </div>
-          <nav className="d-flex align-items-center">
-            <Link
-              href="/"
-              className="btn btn-light border px-4 py-2 fw-medium text-dark"
-              style={{
-                fontSize: "0.875rem",
-                borderRadius: "0.5rem",
-                boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
-              }}
-            >
-              Back to Scanner
+
+            <Link href="/" className="zt-btn">
+              ← Back to Scanner
             </Link>
-          </nav>
+          </div>
         </header>
 
-        {/* POLICY CONTENT */}
-        <main
-          className="container py-5 flex-grow-1"
-          style={{ maxWidth: "840px" }}
-        >
-          <div className="text-center mb-5 mt-4">
-            <h1
-              className="display-5 fw-bold mb-3"
+        {/* MAIN CONTENT */}
+        <main className="zt-wrap">
+          <div className="zt-pp-hero">
+            <span
+              className="zt-pill"
               style={{
-                color: "var(--enterprise-primary)",
-                letterSpacing: "-0.025em",
+                background: "var(--blue-soft)",
+                color: "var(--blue-ink)",
               }}
             >
-              Privacy Policy
+              EFFECTIVE: NOVEMBER 2026
+            </span>
+            <h1>
+              Privacy <span className="zt-highlight">Policy</span>
             </h1>
-            <p
-              className="fs-5 mb-4"
-              style={{ color: "var(--enterprise-secondary)" }}
-            >
-              Your privacy is our highest mandate. We operate with absolute
-              cryptographic and operational transparency.
+            <p>
+              Your images and personal data belong to you. This policy explains
+              exactly how Znxios International handles uploads, browser storage,
+              and Razorpay payments.
             </p>
-            <p className="last-updated">Last Updated: November 2026</p>
           </div>
 
-          <div className="policy-card mb-5">
-            <div className="policy-section">
-              <h4 className="section-title">
-                1. Introduction & Corporate Identity
-              </h4>
-              <p className="section-text">
-                This Privacy Policy applies to the AI Image Detector platform
-                and associated digital services operated by{" "}
-                <strong>Zen-Tech</strong>, functioning under the parent
-                organization <strong>T-Service Group (Global)</strong>. We are a
-                registered Micro, Small & Medium Enterprise (MSME) recognized by
-                the Government of India (UDYAM-MH-27-0214642). This document
-                legally outlines our strict adherence to data protection laws
-                and our operational architecture designed to maximize user
-                privacy.
+          {/* AT-A-GLANCE PRIVACY GUARANTEES */}
+          <div className="zt-highlights">
+            <div
+              className="zt-hl-card"
+              style={{
+                background: "var(--mint-soft)",
+                borderColor: "var(--mint)",
+              }}
+            >
+              <div className="zt-hl-title" style={{ color: "var(--mint-ink)" }}>
+                0 Bytes Stored
+              </div>
+              <p className="zt-hl-desc">
+                Uploaded images are purged from memory immediately after
+                scanning.
               </p>
             </div>
-
-            <div className="policy-section">
-              <h4 className="section-title">
-                2. Zero-Data Retention Protocol (Image Processing)
-              </h4>
-              <p className="section-text">
-                Our AI Image Detector is engineered around a foundational{" "}
-                <strong>Zero-Data Retention Policy</strong>. We recognize the
-                highly sensitive nature of image verification, particularly
-                regarding deepfake detection and digital forensics. Therefore,
-                our processing pipeline is governed by the following
-                constraints:
-              </p>
-              <ul className="section-text section-list">
-                <li>
-                  <strong>Volatile Memory Processing:</strong> When an image is
-                  uploaded for scanning, it is processed exclusively within our
-                  server's active RAM (Volatile Memory).
-                </li>
-                <li>
-                  <strong>Instantaneous Deletion:</strong> The microsecond the
-                  inference is complete and the scan result is returned to your
-                  client interface, the image binary is permanently wiped from
-                  our environment.
-                </li>
-                <li>
-                  <strong>No Persistent Storage:</strong> We do not log, cache,
-                  backup, or commit any user-uploaded media to any solid-state
-                  drives, databases, or cloud storage buckets.
-                </li>
-                <li>
-                  <strong>No Model Training:</strong> Under no circumstances do
-                  we utilize user-submitted imagery to fine-tune, train, or
-                  optimize our proprietary AI models. Your private data remains
-                  yours.
-                </li>
-              </ul>
-            </div>
-
-            <div className="policy-section">
-              <h4 className="section-title">
-                3. Data We Collect & How We Use It
-              </h4>
-              <p className="section-text">
-                To maintain the functionality and security of our platform, we
-                collect the absolute minimum amount of operational data
-                required:
-              </p>
-              <ul className="section-text section-list">
-                <li>
-                  <strong>Local Storage (Browser-Side):</strong> We utilize
-                  standard Local Storage mechanisms within your web browser to
-                  track your daily free scan quota. This counter exists purely
-                  on your device and is not synchronized with our backend
-                  servers.
-                </li>
-                <li>
-                  <strong>Technical Telemetry:</strong> For security monitoring
-                  against DDoS attacks and abuse, we temporarily process
-                  standard network logs, including anonymized IP addresses,
-                  browser User-Agent strings, and timestamp data. This data is
-                  purged automatically on a rolling basis.
-                </li>
-                <li>
-                  <strong>Account & Payment Data:</strong> For users upgrading
-                  to our Professional or Enterprise tiers, basic profile and
-                  billing information is collected. Payment processing is
-                  handled securely off-site via our authorized gateway (Razorpay
-                  under the Zen-Tech International brand); we do not store raw
-                  credit card or banking credentials on our servers.
-                </li>
-              </ul>
-            </div>
-
-            <div className="policy-section">
-              <h4 className="section-title">
-                4. Enterprise Security Infrastructure
-              </h4>
-              <p className="section-text">
-                Zen-Tech secures all active connections using enterprise-grade
-                TLS 1.3 (Transport Layer Security) encryption. Any payload
-                transferred between your local machine and our inference nodes
-                is encrypted in transit. Our deployment environments are
-                consistently audited for vulnerabilities, ensuring that our
-                zero-retention pledge is cryptographically enforced and
-                impenetrable to unauthorized extraction.
+            <div
+              className="zt-hl-card"
+              style={{
+                background: "var(--blue-soft)",
+                borderColor: "var(--blue)",
+              }}
+            >
+              <div className="zt-hl-title" style={{ color: "var(--blue-ink)" }}>
+                No Account Login
+              </div>
+              <p className="zt-hl-desc">
+                We do not build user profiles, passwords, or tracking accounts.
               </p>
             </div>
-
-            <div className="policy-section">
-              <h4 className="section-title">
-                5. Third-Party Sharing & Compliance
-              </h4>
-              <p className="section-text">
-                We categorically do not sell, rent, or trade your personal data
-                or usage metrics to advertising agencies, data brokers, or
-                external third parties. Information is only shared under the
-                following strict conditions:
+            <div
+              className="zt-hl-card"
+              style={{
+                background: "var(--yellow-soft)",
+                borderColor: "var(--yellow)",
+              }}
+            >
+              <div
+                className="zt-hl-title"
+                style={{ color: "var(--yellow-ink)" }}
+              >
+                Local EXIF Parsing
+              </div>
+              <p className="zt-hl-desc">
+                Image EXIF metadata is read directly inside your browser.
               </p>
-              <ul className="section-text section-list">
-                <li>
-                  With authorized infrastructure providers (e.g., Vercel,
-                  Render) strictly for the purpose of hosting the application
-                  securely.
-                </li>
-                <li>
-                  If explicitly compelled by a legally binding court order or
-                  warrant from recognized law enforcement agencies. However,
-                  because we practice zero-data retention on media, we cannot
-                  and will not produce images that have already been purged from
-                  our RAM.
-                </li>
-              </ul>
             </div>
+            <div
+              className="zt-hl-card"
+              style={{
+                background: "var(--violet-soft)",
+                borderColor: "var(--violet)",
+              }}
+            >
+              <div
+                className="zt-hl-title"
+                style={{ color: "var(--violet-ink)" }}
+              >
+                No AI Training
+              </div>
+              <p className="zt-hl-desc">
+                We never retain, sell, or train AI models on your pictures.
+              </p>
+            </div>
+          </div>
 
-            <div className="policy-section">
-              <h4 className="section-title">
-                6. Cyber Crime Mitigation & User Responsibility
-              </h4>
-              <p className="section-text">
-                This platform is an open-access utility built to democratize
-                digital safety and empower individuals against synthetic media
-                manipulation, deepfakes, and extortion. While we provide the
-                technological means for verification, we are not an
-                investigatory body.
-                <br />
-                <br />
-                If you are utilizing our tool to investigate a potential cyber
-                offense against yourself or a loved one, we strongly urge you to
-                formally report the incident to the authorities. In India,
-                cybercrimes can be reported via the{" "}
-                <a
-                  href="https://sancharsaathi.gov.in/"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="enterprise-link"
+          {/* POLICY SECTIONS */}
+          <div className="zt-policy-stack">
+            <section className="zt-policy-card">
+              <div className="zt-policy-head">
+                <span
+                  className="zt-sec-num"
+                  style={{
+                    background: "var(--mint-soft)",
+                    color: "var(--mint-ink)",
+                  }}
                 >
-                  Sanchar Saathi
-                </a>{" "}
-                portal or the National Cyber Crime Reporting Portal. Any misuse
-                of our API for malicious reconnaissance is strictly prohibited
-                and will result in a permanent IP block.
+                  01
+                </span>
+                <h2>Zero Image Retention Policy</h2>
+              </div>
+              <p>
+                When you upload an image for AI detection, the file is
+                transmitted over HTTPS, processed strictly in volatile server
+                memory (RAM) to compute the authenticity score, and immediately
+                discarded once the result is returned to your browser.
               </p>
-            </div>
+              <ul className="zt-policy-list">
+                <li>
+                  <strong>No disk storage:</strong> We never write your uploaded
+                  images to databases, cloud buckets, or log files.
+                </li>
+                <li>
+                  <strong>No model training:</strong> Your photos are never used
+                  to train, fine-tune, or benchmark third-party or internal AI
+                  models.
+                </li>
+                <li>
+                  <strong>Client-side EXIF:</strong> Camera hardware, software
+                  tags, and resolution metadata are extracted locally in your
+                  browser using client-side code.
+                </li>
+              </ul>
+            </section>
 
-            <div className="policy-section">
-              <h4 className="section-title">
-                7. Contact & Data Subject Rights
-              </h4>
-              <p className="section-text">
-                Depending on your jurisdiction, you maintain the right to
-                request access to, correction of, or deletion of any persistent
-                personal data we may hold (such as email addresses for support
-                tickets). For privacy-related inquiries, legal compliance
-                matters, or to exercise your data rights, please contact our
-                administrative team directly:
-                <br />
-                <br />
-                <br />
-                <strong>Support Portal:</strong>{" "}
-                <a
-                  href="https://zen-tech.vercel.app/Contact"
-                  className="enterprise-link"
+            <section className="zt-policy-card">
+              <div className="zt-policy-head">
+                <span
+                  className="zt-sec-num"
+                  style={{
+                    background: "var(--blue-soft)",
+                    color: "var(--blue-ink)",
+                  }}
                 >
-                  Zen-Tech Support
-                </a>
+                  02
+                </span>
+                <h2>Browser Storage (No-Login Architecture)</h2>
+              </div>
+              <p>
+                Because our platform operates without user accounts or
+                passwords, we use your browser&apos;s{" "}
+                <code
+                  style={{
+                    fontFamily: "var(--font-mono)",
+                    color: "var(--ink)",
+                  }}
+                >
+                  localStorage
+                </code>{" "}
+                strictly for core functionality:
               </p>
-            </div>
+              <ul className="zt-policy-list">
+                <li>
+                  <strong>Daily Free Quota:</strong> Tracks your daily count of
+                  free scans (up to 10 per day) locally on your device.
+                </li>
+                <li>
+                  <strong>Subscription Access Key:</strong> Saves your verified
+                  Razorpay Order ID locally so your Professional or Enterprise
+                  features stay unlocked across sessions.
+                </li>
+              </ul>
+              <p style={{ marginTop: 12 }}>
+                We do not use invasive cross-site advertising cookies or sell
+                behavioral tracking data.
+              </p>
+            </section>
+
+            <section className="zt-policy-card">
+              <div className="zt-policy-head">
+                <span
+                  className="zt-sec-num"
+                  style={{
+                    background: "var(--yellow-soft)",
+                    color: "var(--yellow-ink)",
+                  }}
+                >
+                  03
+                </span>
+                <h2>Payments, Billing &amp; Access Key Delivery</h2>
+              </div>
+              <p>
+                When you upgrade to a Professional or Enterprise plan, we
+                collect your <strong>name</strong>,{" "}
+                <strong>email address</strong>, and{" "}
+                <strong>phone number</strong> solely to:
+              </p>
+              <ul className="zt-policy-list">
+                <li>
+                  Initialize and verify your transaction securely through{" "}
+                  <strong>Razorpay</strong> (supporting UPI and international
+                  cards).
+                </li>
+                <li>
+                  Email your unique <strong>Access Key (Order ID)</strong> and
+                  payment confirmation receipt from our automated mailer (
+                  <code
+                    style={{
+                      fontFamily: "var(--font-mono)",
+                      color: "var(--ink)",
+                    }}
+                  >
+                    support.znxios@gmail.com
+                  </code>
+                  ).
+                </li>
+                <li>
+                  Verify your Order ID if you choose to restore your license on
+                  another browser or device.
+                </li>
+              </ul>
+              <p style={{ marginTop: 12 }}>
+                We never see, process, or store your UPI PIN, bank credentials,
+                or credit/debit card numbers. All payment credentials are
+                handled directly by Razorpay under PCI-DSS compliance.
+              </p>
+            </section>
+
+            <section className="zt-policy-card">
+              <div className="zt-policy-head">
+                <span
+                  className="zt-sec-num"
+                  style={{
+                    background: "var(--violet-soft)",
+                    color: "var(--violet-ink)",
+                  }}
+                >
+                  04
+                </span>
+                <h2>CSV Forensic Reports &amp; Batch Scans</h2>
+              </div>
+              <p>
+                Enterprise CSV forensic reports are generated entirely inside
+                your browser from your active session results and downloaded
+                directly to your device. No copies of your batch queues or
+                exported CSV reports are saved on our servers.
+              </p>
+            </section>
+
+            <section className="zt-policy-card">
+              <div className="zt-policy-head">
+                <span
+                  className="zt-sec-num"
+                  style={{
+                    background: "var(--rose-soft)",
+                    color: "var(--rose-ink)",
+                  }}
+                >
+                  05
+                </span>
+                <h2>Third-Party Services &amp; External Portals</h2>
+              </div>
+              <p>
+                Our website integrates with Razorpay for payment processing and
+                provides an informational link to the{" "}
+                <strong>Sanchar Saathi</strong> portal for reporting deepfake
+                cybercrime. Once you navigate to an external portal, your
+                interactions are governed by that third party&apos;s privacy
+                policy.
+              </p>
+            </section>
+
+            <section className="zt-policy-card">
+              <div className="zt-policy-head">
+                <span
+                  className="zt-sec-num"
+                  style={{
+                    background: "var(--blue-soft)",
+                    color: "var(--blue-ink)",
+                  }}
+                >
+                  06
+                </span>
+                <h2>Data Rights &amp; Contact Information</h2>
+              </div>
+              <p>
+                You may clear your locally stored Access Key or scan counter at
+                any time from your browser settings or via the{" "}
+                <strong>Access Key</strong> menu on our homepage. For billing
+                inquiries, privacy requests, or enterprise compliance
+                documentation, contact us directly:
+              </p>
+
+              <div className="zt-contact-box">
+                <div>
+                  <div className="zt-contact-label">Operator</div>
+                  <div className="zt-contact-val">Znxios International</div>
+                </div>
+                <div>
+                  <div className="zt-contact-label">Support Email</div>
+                  <div className="zt-contact-val">
+                    <a href="mailto:support.znxios@gmail.com">
+                      support.znxios@gmail.com
+                    </a>
+                  </div>
+                </div>
+                <div>
+                  <div className="zt-contact-label">Jurisdiction</div>
+                  <div className="zt-contact-val">International</div>
+                </div>
+              </div>
+            </section>
           </div>
         </main>
 
-        {/* ENTERPRISE FOOTER */}
-        <footer
-          className="w-100 py-4 bg-white"
-          style={{ borderTop: "1px solid var(--border-color)" }}
-        >
-          <div className="container d-flex flex-column flex-md-row justify-content-between align-items-center">
-            <div className="d-flex align-items-center gap-2 mb-3 mb-md-0">
-              <span
-                className="fw-bold fs-5"
-                style={{ color: "var(--enterprise-primary)" }}
-              >
-                Zen-Tech
-              </span>
-              <p
-                className="mb-0 fs-6 ms-3 ps-3"
-                style={{
-                  color: "var(--enterprise-secondary)",
-                  borderLeft: "1px solid var(--border-color)",
-                }}
-              >
-                © {currentYear || "2026"} T-Service Group. All rights reserved.
-              </p>
+        {/* FOOTER */}
+        <footer className="zt-footer">
+          <div className="zt-footer-inner">
+            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+              <strong style={{ color: "var(--ink)", fontSize: 15 }}>
+                Znxios International
+              </strong>
+              <span>© {currentYear} All rights reserved</span>
             </div>
-            <div className="d-flex gap-4">
-              <Link href="/Contact" className="enterprise-link text-muted">
-                Contact
-              </Link>
-            </div>
+            <Link
+              href="/"
+              style={{
+                fontSize: 13,
+                fontWeight: 700,
+                color: "var(--blue-ink)",
+                textDecoration: "none",
+              }}
+            >
+              Return to AI Image Detector
+            </Link>
           </div>
         </footer>
       </div>
